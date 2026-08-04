@@ -1,0 +1,10 @@
+{
+  "name": "I O I Education Network",
+  "description": "Global AI English Learning Platform featuring AI Avatar Teachers, Real-Time Voice Practice, Personalised Curriculums, and CEFR Assessment.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
