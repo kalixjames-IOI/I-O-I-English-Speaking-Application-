@@ -9,6 +9,11 @@ interface MobileContainerProps {
   userXp: number;
   userPlan: string;
   onOpenSubscription: () => void;
+  isAuthenticated?: boolean;
+  userEmail?: string | null;
+  userName?: string;
+  onSignIn?: () => void;
+  onSignOut?: () => void;
 }
 
 export const MobileContainer: React.FC<MobileContainerProps> = ({

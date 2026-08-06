@@ -1,6 +1,6 @@
 import React from "react";
 import { UserProfile, CEFRLevel } from "../types";
-import { Sparkles, Flame, Trophy, Award, Crown, Globe, ChevronRight } from "lucide-react";
+import { Sparkles, Flame, Trophy, Award, Crown, Globe, ChevronRight, LogIn, LogOut } from "lucide-react";
 
 interface HeaderNavProps {
   user: UserProfile;
@@ -8,6 +8,11 @@ interface HeaderNavProps {
   setActiveTab: (tab: string) => void;
   onOpenSubscription: () => void;
   onOpenOnboarding: () => void;
+  isAuthenticated?: boolean;
+  userEmail?: string | null;
+  userName?: string;
+  onSignIn?: () => void;
+  onSignOut?: () => void;
 }
 
 export const HeaderNav: React.FC<HeaderNavProps> = ({
@@ -15,7 +20,12 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
   activeTab,
   setActiveTab,
   onOpenSubscription,
-  onOpenOnboarding
+  onOpenOnboarding,
+  isAuthenticated,
+  userEmail,
+  userName,
+  onSignIn,
+  onSignOut
 }) => {
   const cefrColors: Record<CEFRLevel, string> = {
     A1: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
@@ -55,6 +65,27 @@ export const HeaderNav: React.FC<HeaderNavProps> = ({
               <span className="text-indigo-300 capitalize">{user.plan} Plan</span>
             </p>
           </div>
+        </div>
+
+        {/* Auth Button */}
+        <div className="flex items-center space-x-2">
+          {isAuthenticated ? (
+            <button
+              onClick={onSignOut}
+              className="flex items-center space-x-1 bg-slate-800 border border-slate-700 text-slate-300 font-medium px-3 py-1.5 rounded-xl text-xs hover:bg-slate-700 transition-all cursor-pointer"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              <span>{userName || userEmail || 'Account'}</span>
+            </button>
+          ) : (
+            <button
+              onClick={onSignIn}
+              className="flex items-center space-x-1 bg-gradient-to-r from-indigo-600 to-cyan-600 text-white font-bold px-3 py-1.5 rounded-xl text-xs shadow-md hover:brightness-110 transition-all cursor-pointer"
+            >
+              <LogIn className="w-3.5 h-3.5" />
+              <span>Sign In</span>
+            </button>
+          )}
         </div>
 
         {/* Upgrade & Roadmap Button */}
