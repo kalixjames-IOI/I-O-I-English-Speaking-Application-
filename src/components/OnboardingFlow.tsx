@@ -68,7 +68,10 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ user, onComplete
         })
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data || data.error || typeof data.curriculumName !== "string" || !Array.isArray(data.dailyPlan)) {
+        throw new Error(data?.error || "The AI roadmap response was incomplete.");
+      }
       setGeneratedRoadmap(data);
       setStep("roadmap");
     } catch (err) {

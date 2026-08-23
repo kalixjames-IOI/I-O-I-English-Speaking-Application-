@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import type { AITeacher, PlanType, UserProfile } from "./types";
+import type { AITeacher, CEFRLevel, PlanType, UserProfile } from "./types";
 import { AI_TEACHERS, INITIAL_USER } from "./data/initialData";
 import { AuthProvider, useAuth } from "./lib/AuthContext";
 import { db, isSupabaseConfigured } from "./lib/supabase";
@@ -19,6 +19,23 @@ import { HomeDashboard } from "./components/HomeDashboard";
 import { CommunityView } from "./components/CommunityView";
 import { Sparkles } from "lucide-react";
 
+type PersistedProfile = {
+  full_name?: string | null;
+  email?: string | null;
+  native_language?: string | null;
+  current_level?: string | null;
+  target_goal?: string | null;
+  daily_minutes_goal?: number | null;
+  learning_style?: string | null;
+  streak_days?: number | null;
+  total_xp?: number | null;
+  fluency_score?: number | null;
+  plan?: string | null;
+  roadmap?: unknown;
+};
+
+function isCEFRLevel(value: unknown): value is CEFRLevel { return ["A1", "A2", "B1", "B2", "C1", "C2"].includes(String(value)); }
+
 function AppContent() {
   const { user: authUser, loading: authLoading, signOut, profile } = useAuth();
   const [showAuth, setShowAuth] = useState(false);
@@ -32,42 +49,60 @@ function AppContent() {
 
   React.useEffect(() => {
     if (!authUser) return;
-    setUser((previous) => ({ ...previous, id: authUser.id, email: authUser.email || previous.email, name: profile?.full_name || authUser.user_metadata?.full_name || previous.name }));
+    const saved = (profile ?? {}) as PersistedProfile;
+    setUser((previous) => ({
+      ...previous,
+      id: authUser.id,
+      email: saved.email || authUser.email || previous.email,
+      name: saved.full_name || authUser.user_metadata?.full_name || previous.name,
+      nativeLanguage: saved.native_language || previous.nativeLanguage,
+      currentLevel: isCEFRLevel(saved.current_level) ? saved.current_level : previous.currentLevel,
+      targetGoal: saved.target_goal || previous.targetGoal,
+      dailyMinutesGoal: saved.daily_minutes_goal ?? previous.dailyMinutesGoal,
+      learningStyle: saved.learning_style || previous.learningStyle,
+      streakDays: saved.streak_days ?? previous.streakDays,
+      totalXp: saved.total_xp ?? previous.totalXp,
+      fluencyScore: saved.fluency_score ?? previous.fluencyScore,
+      plan: saved.plan === "premium" || saved.plan === "professional" ? saved.plan : previous.plan,
+      roadmap: saved.roadmap && typeof saved.roadmap === "object" ? saved.roadmap as UserProfile["roadmap"] : previous.roadmap,
+    }));
   }, [authUser, profile]);
 
   React.useEffect(() => {
     if (!authUser || !isSupabaseConfigured) return;
     let active = true;
-    void Promise.all([db.getProgress(authUser.id), db.getSubscription(authUser.id)]).then(([progressResult, subscriptionResult]) => {
-      if (!active) return;
-      if (!progressResult.error) {
-        const rows = progressResult.data ?? [];
-        setUser((previous) => ({
-          ...previous,
-          completedLessonIds: rows.filter((row) => row.completion_status === "completed" && row.lesson_id).map((row) => row.lesson_id as string),
-          totalXp: rows.reduce((sum, row) => sum + Number(row.xp_earned ?? 0), 0),
-        }));
-      }
-      if (!subscriptionResult.error && subscriptionResult.data?.plan_name) {
-        const plan = subscriptionResult.data.plan_name as PlanType;
-        if (["free", "premium", "professional"].includes(plan)) setUser((previous) => ({ ...previous, plan }));
-      }
+    void db.getProgress(authUser.id).then(({ data, error }) => {
+      if (!active || error || !data) return;
+      const completedIds = data.filter((item) => item.completion_status === "completed" && item.lesson_id).map((item) => item.lesson_id as string);
+      const scored = data.filter((item) => typeof item.speaking_score === "number" && item.speaking_score > 0);
+      const averageSpeaking = scored.length ? Math.round(scored.reduce((sum, item) => sum + (item.speaking_score ?? 0), 0) / scored.length) : undefined;
+      const earnedXp = data.reduce((sum, item) => sum + (item.xp_earned ?? 0), 0);
+      setUser((previous) => ({ ...previous, completedLessonIds: Array.from(new Set([...previous.completedLessonIds, ...completedIds])), totalXp: Math.max(previous.totalXp, earnedXp), fluencyScore: averageSpeaking ?? previous.fluencyScore }));
     });
     return () => { active = false; };
-  }, [authUser]);
+  }, [authUser?.id]);
 
   const updateUser = (fields: Partial<UserProfile>) => setUser((previous) => ({ ...previous, ...fields }));
   const handleUpdateUser = (fields: Partial<UserProfile>) => {
     updateUser(fields);
     if (authUser && isSupabaseConfigured) {
-      void db.updateProfile(authUser.id, { full_name: fields.name, native_language: fields.nativeLanguage });
+      const next = { ...user, ...fields };
+      void db.updateProfile(authUser.id, { full_name: next.name, native_language: next.nativeLanguage, current_level: next.currentLevel, target_goal: next.targetGoal, daily_minutes_goal: next.dailyMinutesGoal, learning_style: next.learningStyle, streak_days: next.streakDays, total_xp: next.totalXp, fluency_score: next.fluencyScore, plan: next.plan, roadmap: next.roadmap ? JSON.parse(JSON.stringify(next.roadmap)) : null });
     }
+    setShowOnboarding(false);
   };
   const handleCompleteLesson = (xpGained: number) => {
-    const alreadyCompleted = activeLessonId ? user.completedLessonIds.includes(activeLessonId) : false;
-    if (!alreadyCompleted) {
-      updateUser({ totalXp: user.totalXp + xpGained, completedLessonIds: activeLessonId ? Array.from(new Set([...user.completedLessonIds, activeLessonId])) : user.completedLessonIds });
-    }
+    const lessonId = activeLessonId;
+    setUser((previous) => {
+      const nextXp = previous.totalXp + xpGained;
+      if (authUser && isSupabaseConfigured && lessonId) {
+        void Promise.all([
+          db.upsertProgress(authUser.id, lessonId, { completion_status: "completed", score: 100, xp_earned: xpGained }),
+          db.updateProfile(authUser.id, { total_xp: nextXp }),
+        ]);
+      }
+      return { ...previous, totalXp: nextXp, completedLessonIds: lessonId ? Array.from(new Set([...previous.completedLessonIds, lessonId])) : previous.completedLessonIds };
+    });
     setActiveLessonId(null);
   };
   const openTutor = () => setActiveTab("tutor");
@@ -89,7 +124,7 @@ function AppContent() {
 
     {showAuth && <AuthModal onClose={() => setShowAuth(false)} onComplete={() => setShowAuth(false)} />}
     {showOnboarding && <OnboardingFlow user={user} onComplete={handleUpdateUser} onClose={() => setShowOnboarding(false)} />}
-    {showSubscription && <SubscriptionModal currentPlan={user.plan} onClose={() => setShowSubscription(false)} />}
+    {showSubscription && <SubscriptionModal currentPlan={user.plan} onUpgradePlan={(plan: PlanType) => updateUser({ plan })} onClose={() => setShowSubscription(false)} />}
     {showCertificate && <CertificateModal user={user} onClose={() => setShowCertificate(false)} />}
     {activeLessonId && <LessonDatabasePlayer lessonId={activeLessonId} onClose={() => setActiveLessonId(null)} onComplete={handleCompleteLesson} onOpenTutor={openTutor} />}
   </>;

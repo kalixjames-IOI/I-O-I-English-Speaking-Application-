@@ -10,7 +10,8 @@ dotenv.config();
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
+const GEMINI_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-3.7-flash";
 const requireAiAuth = process.env.AI_REQUIRE_AUTH === "true" || process.env.NODE_ENV === "production";
 const serverSupabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const serverSupabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
@@ -108,7 +109,7 @@ app.post("/api/gemini/onboarding-roadmap", async (req, res) => {
 Return JSON conforming strictly to the requested schema.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
         systemInstruction: "You are the Head Curriculum Architect at IOI Education Network. Output realistic, structured, highly motivating English learning plans tailored specifically to learners of their native language.",
@@ -186,7 +187,7 @@ Respond in JSON according to schema.`;
     ];
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: GEMINI_TEXT_MODEL,
       contents: contents,
       config: {
         systemInstruction: systemPrompt,
@@ -243,7 +244,7 @@ Current Level: ${cefrLevel || "B1"}
 Provide a comprehensive speech assessment JSON including scores (0-100), word-level feedback, and native alternative.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
         systemInstruction: "You are the Chief Pronunciation & Speech Evaluator at IOI Education Network. Be encouraging yet precise in scoring phonemes, fluency, and expression.",
@@ -353,7 +354,7 @@ Target CEFR: ${targetCEFR || "B2"}
 Evaluate grammar, vocabulary level, sentence structure, coherence, and suggest higher-level vocabulary replacements.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
         systemInstruction: "You are the Senior English Writing Examiner at IOI Education Network. Provide detailed, helpful essay feedback.",
@@ -425,7 +426,7 @@ app.post("/api/gemini/translate-explain", async (req, res) => {
 English Text: "${text}"`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
         systemInstruction: `You are the Multilingual AI Translator for IOI Education Network. Translate accurately into ${nativeLanguage || "the user's native language"} and break down key phrases and cultural nuances.`,
@@ -492,7 +493,7 @@ Target CEFR: "${cefrLevel || "B1"}"
 Learner Goal: "${userGoal || "Speaking Fluency"}"`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
         systemInstruction: "You are the AI Content Generator for IOI Education Network. Produce realistic, fun, practical roleplays and vocabulary for modern English learners.",
@@ -652,7 +653,7 @@ Required 13-part lesson schema in JSON:
 13. aiEvaluationCriteria (targetGrammarMastery, targetVocabularyDiversity, accuracyThresholdPercent, keyFeedbackFocusPoints)`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
         systemInstruction: "You are the Chief AI Curriculum Architect at IOI Education Network. Output complete, highly educational 13-part lessons strictly adhering to JSON schema.",
@@ -1183,7 +1184,7 @@ Return a valid JSON object matching the requested schema with ALL 8 required ele
 8. Lesson summary (keyTakeaways, grammarSummary, vocabularySummary, estimatedXp)`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.6-flash",
+      model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
         systemInstruction: "You are the Executive Producer & AI Video Director at IOI Education Network. Output rich, highly engaging, pedagagically sound video lesson manifests with precise timing, avatar cues, interactive quiz triggers, and slide content.",

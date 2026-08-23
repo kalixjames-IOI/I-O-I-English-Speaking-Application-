@@ -1,20 +1,25 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { auth as authHelpers, db, isSupabaseConfigured } from "./supabase";
+import { auth as authHelpers, isSupabaseConfigured, supabase } from "./supabase";
+import type { Database } from "./database.types";
+
+type Profile = Database["public"]["Tables"]["profiles"]["Row"];
+type AuthError = { message: string; status?: number } | null;
 
 interface AuthContextType {
   session: Session | null;
   user: User | null;
   loading: boolean;
-  signUp: (email: string, password: string, fullName?: string) => Promise<{ error: any }>;
-  signIn: (email: string, password: string) => Promise<{ error: any }>;
-  signInWithGoogle: () => Promise<{ error: any }>;
+  signUp: (email: string, password: string, fullName?: string) => Promise<{ error: AuthError }>;
+  signIn: (email: string, password: string) => Promise<{ error: AuthError }>;
+  signInWithGoogle: () => Promise<{ error: AuthError }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
-  profile: any | null;
+  profile: Profile | null;
 }
 
 const AuthContext = createContext<AuthContextType | null>(null);
+const configurationError = { message: "Supabase is not configured for this environment. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable accounts." };
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
@@ -26,77 +31,72 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
-  const [profile, setProfile] = useState<any | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
 
   const refreshProfile = useCallback(async () => {
-    if (!user || !isSupabaseConfigured) {
-      setProfile(null);
+    if (!user || !isSupabaseConfigured) return;
+    const { data, error } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
+    if (error) {
+      console.warn("[Auth] Profile lookup failed:", error.message);
       return;
     }
-    const { data } = await db.ensureProfile(user.id, user.email, user.user_metadata?.full_name);
-    if (data) setProfile(data);
+    if (data) {
+      setProfile(data);
+      return;
+    }
+    const { data: created, error: createError } = await supabase.from("profiles").insert({ id: user.id, email: user.email ?? null, full_name: user.user_metadata?.full_name ?? user.email?.split("@")[0] ?? "Learner" }).select("*").single();
+    if (createError) {
+      console.warn("[Auth] Profile creation failed:", createError.message);
+      return;
+    }
+    setProfile(created);
   }, [user]);
 
   useEffect(() => {
-    let mounted = true;
-    authHelpers.getSession().then(({ data: { session: currentSession } }) => {
-      if (!mounted) return;
-      setSession(currentSession);
-      setUser(currentSession?.user ?? null);
+    if (!isSupabaseConfigured) {
       setLoading(false);
-    }).catch(() => {
-      if (mounted) setLoading(false);
+      return;
+    }
+    let active = true;
+    void supabase.auth.getSession().then(({ data: { session: nextSession }, error }) => {
+      if (!active) return;
+      if (error) console.warn("[Auth] Session lookup failed:", error.message);
+      setSession(nextSession);
+      setUser(nextSession?.user ?? null);
+      setLoading(false);
     });
-
-    const { data: { subscription } } = authHelpers.onAuthStateChange((currentSession: Session | null) => {
-      setSession(currentSession);
-      setUser(currentSession?.user ?? null);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setUser(nextSession?.user ?? null);
       setProfile(null);
       setLoading(false);
     });
-
-    return () => {
-      mounted = false;
-      subscription.unsubscribe();
-    };
+    return () => { active = false; subscription.unsubscribe(); };
   }, []);
 
-  useEffect(() => {
-    if (user) void refreshProfile();
-    else setProfile(null);
-  }, [user, refreshProfile]);
+  useEffect(() => { void refreshProfile(); }, [refreshProfile]);
 
   const signUp = async (email: string, password: string, fullName?: string) => {
-    const { data, error } = await authHelpers.signUp(email, password, fullName);
-    if (!error && data.user && data.session && isSupabaseConfigured) {
-      await db.ensureProfile(data.user.id, data.user.email, fullName);
-    }
-    return { error };
+    if (!isSupabaseConfigured) return { error: configurationError };
+    const { error } = await authHelpers.signUp(email.trim(), password, fullName?.trim());
+    return { error: error ? { message: error.message, status: error.status } : null };
   };
-
   const signIn = async (email: string, password: string) => {
-    const { data, error } = await authHelpers.signIn(email, password);
-    if (!error && data.user && isSupabaseConfigured) {
-      await db.ensureProfile(data.user.id, data.user.email, data.user.user_metadata?.full_name);
-    }
-    return { error };
+    if (!isSupabaseConfigured) return { error: configurationError };
+    const { error } = await authHelpers.signIn(email.trim(), password);
+    return { error: error ? { message: error.message, status: error.status } : null };
   };
-
   const signInWithGoogle = async () => {
+    if (!isSupabaseConfigured) return { error: configurationError };
     const { error } = await authHelpers.signInWithGoogle();
-    return { error };
+    return { error: error ? { message: error.message, status: error.status } : null };
   };
-
   const signOut = async () => {
-    await authHelpers.signOut();
+    if (isSupabaseConfigured) await authHelpers.signOut();
     setSession(null);
     setUser(null);
     setProfile(null);
   };
 
-  return (
-    <AuthContext.Provider value={{ session, user, loading, signUp, signIn, signInWithGoogle, signOut, refreshProfile, profile }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={{ session, user, loading, signUp, signIn, signInWithGoogle, signOut, refreshProfile, profile }}>{children}</AuthContext.Provider>;
 };
