@@ -1,5 +1,6 @@
-import React, { useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { apiFetch } from "../lib/api";
+import { audioBlobToBase64, describeAudioCaptureError, startAudioRecorder, type AudioRecorderHandle } from "../lib/audioRecorder";
 import { UserProfile, SpeechAssessmentResult } from "../types";
 import { describeSpeechRecognitionError, getSpeechRecognitionConstructor, normalizeTranscript } from "../lib/speechRecognition";
 import { Mic, MicOff, Volume2, Sparkles, RefreshCw, Award, AlertCircle } from "lucide-react";
@@ -19,10 +20,19 @@ export const PronunciationStudio: React.FC<PronunciationStudioProps> = ({ user }
   const [isRecording, setIsRecording] = useState(false);
   const [spokenTranscript, setSpokenTranscript] = useState("");
   const [isAssessing, setIsAssessing] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [assessmentResult, setAssessmentResult] = useState<SpeechAssessmentResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const recognitionRef = useRef<any>(null);
+  const audioRecorderRef = useRef<AudioRecorderHandle | null>(null);
   const transcriptRef = useRef("");
+
+  useEffect(() => () => {
+    recognitionRef.current?.abort?.();
+    recognitionRef.current = null;
+    audioRecorderRef.current?.cancel();
+    audioRecorderRef.current = null;
+  }, []);
 
   const runSpeechAssessment = async (text: string) => {
     const transcript = normalizeTranscript(text);
@@ -50,10 +60,54 @@ export const PronunciationStudio: React.FC<PronunciationStudioProps> = ({ user }
     }
   };
 
+  const transcribeAudio = async (blob: Blob) => {
+    setIsTranscribing(true);
+    setError(null);
+    try {
+      const audioBase64 = await audioBlobToBase64(blob);
+      const supportedMimeTypes = ["audio/webm", "audio/webm;codecs=opus", "audio/mp4", "audio/ogg", "audio/ogg;codecs=opus"];
+      const mimeType = supportedMimeTypes.includes(blob.type) ? blob.type : "audio/webm";
+      const response = await apiFetch("/api/gemini/transcribe-speech", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ audioBase64, mimeType }) });
+      const data = await response.json().catch(() => ({}));
+      const transcript = typeof data.transcript === "string" ? normalizeTranscript(data.transcript) : "";
+      if (!response.ok || !transcript) throw new Error(data.error || "No transcript was captured. Speak clearly and try again.");
+      setSpokenTranscript(transcript);
+      await runSpeechAssessment(transcript);
+    } catch (captureError) {
+      setError(describeAudioCaptureError(captureError));
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
+
+  const startRecordedAudio = async () => {
+    setError(null);
+    setAssessmentResult(null);
+    setSpokenTranscript("");
+    try {
+      audioRecorderRef.current = await startAudioRecorder();
+      setIsRecording(true);
+    } catch (captureError) {
+      setError(describeAudioCaptureError(captureError));
+    }
+  };
+
+  const stopRecordedAudio = async () => {
+    const recorder = audioRecorderRef.current;
+    audioRecorderRef.current = null;
+    setIsRecording(false);
+    if (!recorder) return;
+    try {
+      await transcribeAudio(await recorder.stop());
+    } catch (captureError) {
+      setError(describeAudioCaptureError(captureError));
+    }
+  };
+
   const handleStartRecording = () => {
     const SpeechRec = getSpeechRecognitionConstructor();
     if (!SpeechRec) {
-      setError("Speech recognition is not supported in this browser. You can type your practice sentence, but an AI score requires a captured transcript.");
+      void startRecordedAudio();
       return;
     }
     setError(null);
@@ -92,6 +146,7 @@ export const PronunciationStudio: React.FC<PronunciationStudioProps> = ({ user }
   };
 
   const handleStopRecording = () => {
+    if (!recognitionRef.current && audioRecorderRef.current) { void stopRecordedAudio(); return; }
     recognitionRef.current?.stop?.();
     setIsRecording(false);
   };
@@ -115,7 +170,7 @@ export const PronunciationStudio: React.FC<PronunciationStudioProps> = ({ user }
     </div>
     <div className="space-y-4 rounded-3xl border border-slate-800 bg-slate-900 p-6 text-center"><span className="text-[10px] font-bold uppercase tracking-widest text-indigo-400">Active Practice Target</span><h3 className="mx-auto max-w-md text-sm font-bold text-white">{targetSentence}</h3><button onClick={isRecording ? handleStopRecording : handleStartRecording} className={`mx-auto flex h-20 w-20 items-center justify-center rounded-full shadow-2xl ${isRecording ? "animate-pulse bg-rose-600 text-white ring-8 ring-rose-600/30" : "bg-gradient-to-tr from-indigo-600 to-cyan-500 text-white"}`} aria-label={isRecording ? "Stop microphone" : "Start microphone"}>{isRecording ? <MicOff className="h-8 w-8" /> : <Mic className="h-8 w-8" />}</button><span className="text-xs text-slate-400">{isRecording ? "Listening... Speak now!" : "Tap microphone & speak phrase"}</span>{spokenTranscript && <p className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-left text-xs text-cyan-100"><strong>Captured transcript:</strong> {spokenTranscript}</p>}</div>
     {error && <div className="flex items-start gap-2 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-xs leading-relaxed text-amber-100" role="alert"><AlertCircle className="h-4 w-4 shrink-0" />{error}</div>}
-    {isAssessing && <div className="space-y-2 rounded-3xl border border-slate-800 bg-slate-900 p-6 text-center text-indigo-400"><RefreshCw className="mx-auto h-6 w-6 animate-spin" /><p className="text-xs font-semibold">AI is analyzing your captured transcript...</p></div>}
+    {(isAssessing || isTranscribing) && <div className="space-y-2 rounded-3xl border border-slate-800 bg-slate-900 p-6 text-center text-indigo-400"><RefreshCw className="mx-auto h-6 w-6 animate-spin" /><p className="text-xs font-semibold">{isTranscribing ? "Converting your recording to a transcript..." : "AI is analyzing your captured transcript..."}</p></div>}
     {assessmentResult && !isAssessing && <div className="space-y-4 rounded-3xl border border-slate-800 bg-slate-900 p-5"><div className="flex items-center justify-between border-b border-slate-800 pb-3"><span className="flex items-center space-x-1.5 text-xs font-bold text-white"><Award className="h-4 w-4 text-amber-400" /><span>AI Speech Evaluation Report</span></span><span className="rounded-full border border-emerald-500/30 bg-emerald-500/20 px-2.5 py-0.5 text-xs font-bold text-emerald-400">CEFR {assessmentResult.overallCEFR}</span></div><div className="grid grid-cols-3 gap-2 text-center">{[["Accuracy", assessmentResult.accuracyScore], ["Fluency", assessmentResult.fluencyScore], ["Pronunciation", assessmentResult.pronunciationScore]].map(([label, score]) => <div key={String(label)} className="rounded-2xl border border-slate-700/80 bg-slate-800/80 p-3"><span className="text-[10px] font-semibold uppercase text-slate-400">{label}</span><div className="text-base font-extrabold text-emerald-400">{score}%</div></div>)}</div><div className="space-y-1.5"><span className="text-[11px] font-semibold text-slate-400">Word-level feedback:</span><div className="flex flex-wrap gap-1.5">{assessmentResult.wordFeedback.map((feedback, index) => <span key={`${feedback.word}-${index}`} className="rounded-xl border border-slate-700 bg-slate-950/60 px-2.5 py-1 text-xs font-semibold text-slate-200">{feedback.word} ({feedback.accuracy}%)</span>)}</div></div><div className="rounded-2xl border border-slate-700/80 bg-slate-800/60 p-3 text-xs leading-relaxed text-slate-200"><strong>Feedback:</strong> {assessmentResult.feedbackText}</div></div>}
   </div>;
 };

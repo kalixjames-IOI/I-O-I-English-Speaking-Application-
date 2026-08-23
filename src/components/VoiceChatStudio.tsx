@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { apiFetch } from "../lib/api";
+import { audioBlobToBase64, describeAudioCaptureError, startAudioRecorder, type AudioRecorderHandle } from "../lib/audioRecorder";
 import { AITeacher, ChatMessage, UserProfile } from "../types";
 import { describeSpeechRecognitionError, getSpeechRecognitionConstructor, normalizeTranscript } from "../lib/speechRecognition";
 import { Mic, MicOff, Send, Volume2, Sparkles, RefreshCw, MessageCircle, AlertCircle, Languages, Check, ArrowLeft } from "lucide-react";
@@ -30,9 +31,11 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
   const [translationMap, setTranslationMap] = useState<Record<string, string>>({});
   const [translationErrors, setTranslationErrors] = useState<Record<string, string>>({});
   const [speechError, setSpeechError] = useState<string | null>(null);
+  const [isTranscribing, setIsTranscribing] = useState(false);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+  const audioRecorderRef = useRef<AudioRecorderHandle | null>(null);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -54,11 +57,65 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
     recognition.onerror = (event: any) => { setIsRecording(false); setSpeechError(describeSpeechRecognitionError(event).message); };
     recognition.onend = () => setIsRecording(false);
     recognitionRef.current = recognition;
-    return () => { recognition.abort?.(); recognitionRef.current = null; };
+    return () => {
+      recognition.abort?.();
+      recognitionRef.current = null;
+      audioRecorderRef.current?.cancel();
+      audioRecorderRef.current = null;
+    };
   }, []);
 
+  const transcribeAudio = async (blob: Blob) => {
+    setIsTranscribing(true);
+    setSpeechError(null);
+    try {
+      const audioBase64 = await audioBlobToBase64(blob);
+      const supportedMimeTypes = ["audio/webm", "audio/webm;codecs=opus", "audio/mp4", "audio/ogg", "audio/ogg;codecs=opus"];
+      const mimeType = supportedMimeTypes.includes(blob.type) ? blob.type : "audio/webm";
+      const response = await apiFetch("/api/gemini/transcribe-speech", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ audioBase64, mimeType })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || typeof data.transcript !== "string" || !normalizeTranscript(data.transcript)) throw new Error(data.error || "No transcript was captured. Speak clearly and try again.");
+      setInputSpeechText(normalizeTranscript(data.transcript));
+    } catch (error) {
+      setSpeechError(describeAudioCaptureError(error));
+    } finally {
+      setIsTranscribing(false);
+    }
+  };
+
+  const startRecordedAudio = async () => {
+    setSpeechError(null);
+    setInputSpeechText("");
+    try {
+      audioRecorderRef.current = await startAudioRecorder();
+      setIsRecording(true);
+    } catch (error) {
+      setSpeechError(describeAudioCaptureError(error));
+    }
+  };
+
+  const stopRecordedAudio = async () => {
+    const recorder = audioRecorderRef.current;
+    audioRecorderRef.current = null;
+    setIsRecording(false);
+    if (!recorder) return;
+    try {
+      await transcribeAudio(await recorder.stop());
+    } catch (error) {
+      setSpeechError(describeAudioCaptureError(error));
+    }
+  };
+
   const toggleRecording = () => {
-    if (!recognitionRef.current) { setSpeechError("Speech recognition is not supported in this browser. You can type your message instead."); return; }
+    if (!recognitionRef.current) {
+      if (isRecording) void stopRecordedAudio();
+      else void startRecordedAudio();
+      return;
+    }
     setSpeechError(null);
     if (isRecording) { recognitionRef.current.stop(); setIsRecording(false); return; }
     setInputSpeechText("");
@@ -189,7 +246,7 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
               <span className="text-xs">{teacher.flag}</span>
             </div>
             <p className="text-[11px] text-slate-400">
-              {isSpeakingTeacher ? "🗣️ Speaking..." : isThinking ? "🤔 Formulating response..." : "24/7 AI Voice Active"}
+              {isSpeakingTeacher ? "🗣️ Speaking..." : isTranscribing ? "Transcribing your recording..." : isThinking ? "🤔 Formulating response..." : "24/7 AI Voice Active"}
             </p>
           </div>
         </div>
@@ -210,7 +267,7 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
       </div>
 
       {/* Voice Waveform Live Indicator */}
-      {(isSpeakingTeacher || isRecording) && (
+      {(isSpeakingTeacher || isRecording || isTranscribing) && (
         <div className="bg-indigo-950/80 border-b border-indigo-800/60 px-4 py-2 flex items-center justify-between text-xs text-indigo-200">
           <div className="flex items-center space-x-2">
             <div className="flex items-center space-x-1">
@@ -220,7 +277,7 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
               <span className="w-1 h-4 bg-emerald-400 animate-bounce [animation-delay:0.1s]"></span>
             </div>
             <span className="font-semibold text-[11px]">
-              {isRecording ? "Listening to your voice..." : `${teacher.name} speaking...`}
+              {isRecording ? "Listening to your voice..." : isTranscribing ? "Transcribing your recording..." : `${teacher.name} speaking...`}
             </span>
           </div>
           <span className="text-[10px] bg-indigo-900/80 px-2 py-0.5 rounded text-indigo-300">Live Voice Engine</span>

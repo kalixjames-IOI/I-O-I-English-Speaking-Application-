@@ -10,6 +10,23 @@ import { z } from "zod";
 dotenv.config();
 
 const app = express();
+const allowedCorsOrigins = new Set(
+  (process.env.CORS_ORIGINS || "https://localhost,capacitor://localhost,http://localhost")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+);
+app.use((req, res, next) => {
+  const origin = req.header("origin");
+  if (origin && allowedCorsOrigins.has(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+    res.header("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.header("Vary", "Origin");
+  }
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
 app.use(express.json({
   limit: "10mb",
   verify: (req, _res, buffer) => {
@@ -130,6 +147,8 @@ const learnerContextSchema = z.object({ completedLessons: z.number().int().min(0
 const roadmapRequestSchema = z.object({ nativeLanguage: nativeLanguageSchema, level: cefrSchema, goal: nonEmptyText(160), dailyMinutes: z.number().int().min(5).max(240), learningStyle: nonEmptyText(80), learnerContext: learnerContextSchema.optional() }).strict();
 const teacherRequestSchema = z.object({ teacherId: nonEmptyText(80).optional(), teacherName: nonEmptyText(120).optional(), persona: nonEmptyText(500).optional(), userMessage: nonEmptyText(1200), history: z.array(z.object({ sender: z.enum(["user", "teacher"]), text: nonEmptyText(1200) }).strict()).max(30), cefrLevel: cefrSchema, goal: nonEmptyText(160) }).strict();
 const speechRequestSchema = z.object({ transcript: nonEmptyText(2000), targetPhrase: nonEmptyText(1000).optional(), cefrLevel: cefrSchema }).strict();
+const transcribeSpeechRequestSchema = z.object({ audioBase64: z.string().regex(/^[A-Za-z0-9+/]+={0,2}$/, "Invalid audio data").min(100).max(9000000), mimeType: z.enum(["audio/webm", "audio/webm;codecs=opus", "audio/mp4", "audio/ogg", "audio/ogg;codecs=opus"]) }).strict();
+const transcribeSpeechResponseSchema = z.object({ transcript: nonEmptyText(2000), language: z.string().trim().min(2).max(20).optional() }).strict();
 const translationRequestSchema = z.object({ text: nonEmptyText(2000), nativeLanguage: nativeLanguageSchema }).strict();
 const customLessonRequestSchema = z.object({ topic: nonEmptyText(240), cefrLevel: cefrSchema, userGoal: nonEmptyText(200), learnerContext: learnerContextSchema.optional() }).strict();
 const saveCustomLessonRequestSchema = customLessonSchema.extend({ unitId: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "Invalid unit identifier") });
@@ -339,7 +358,36 @@ app.post("/api/gemini/chat-teacher", async (req, res) => {
   }
 });
 
-// 3. Speech & Pronunciation Assessment
+// 3. Android/WebView audio transcription before speech assessment
+app.post("/api/gemini/transcribe-speech", async (req, res) => {
+  try {
+    const { audioBase64, mimeType } = parseRequest(transcribeSpeechRequestSchema, req.body);
+    const ai = requireAiClient();
+    const response = await generateTextContent(ai, {
+      model: GEMINI_TEXT_MODEL,
+      contents: [{ parts: [
+        { text: "Transcribe this learner audio exactly. Return only the words actually spoken. Do not invent missing words. If the audio is unclear or silent, return a concise error instead of a fabricated transcript." },
+        { inlineData: { mimeType, data: audioBase64 } },
+      ] }],
+      config: {
+        systemInstruction: "You are a strict speech-to-text engine for an English-learning app. The transcript must reflect only audible speech.",
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: { transcript: { type: Type.STRING }, language: { type: Type.STRING } },
+          required: ["transcript"],
+        },
+      },
+    });
+    const data = parseValidatedJson(response, transcribeSpeechResponseSchema);
+    res.json(data);
+  } catch (error: any) {
+    console.error("Speech transcription error:", error);
+    res.status(Number(error?.statusCode) || 500).json({ error: error?.statusCode === 503 ? error.message : error?.statusCode === 400 ? error.message : "Speech transcription is unavailable." });
+  }
+});
+
+// 4. Speech & Pronunciation Assessment
 app.post("/api/gemini/assess-speech", async (req, res) => {
   try {
     const { transcript, targetPhrase, cefrLevel } = parseRequest(speechRequestSchema, req.body);
