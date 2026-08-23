@@ -1,124 +1,124 @@
-# I O I English Speaking — Production Audit and Release Report
+# I O I English Speaking — Production Completion and Release Report
 
 **Audit date:** 23 August 2026
+
 **Repository:** `kalixjames-IOI/I-O-I-English-Speaking-Application-`
-**Scope:** Existing repository only; no rebuild and no video assets generated.
+
+**Scope:** Existing repository preserved and hardened in place; no rebuild and no video media generated.
 
 ## Executive assessment
 
-The existing React/Vite/Capacitor application was preserved and hardened in place. The repository now contains a versioned Supabase schema migration, offline-safe authentication and configuration behavior, authenticated production AI requests, community persistence code, deterministic progress/XP persistence, a non-simulated billing state, and the required Android application identifier.
+The existing React/Vite/Express/Capacitor application was preserved. Production database activation is now complete: the selected Supabase project was restored, reached `ACTIVE_HEALTHY`, accepted the additive migrations, returned seeded curriculum data, and passed the environment-driven smoke test. Supabase security advisors report zero remaining security lints after exposed helper-function execution privileges were revoked.
 
-The application is **not yet production-release complete** because external production configuration cannot be verified in this environment. The selected Supabase project is currently reported as `INACTIVE`, remote table and migration inspection timed out, no payment provider or webhook credentials are configured, the Gemini server credential is not present in the current environment, and Android signing credentials were not supplied. The debug APK is buildable; a signed release APK/AAB is not claimed.
+The application is **not yet ready for public launch** because the payment provider and webhook implementation are not configured, the server-side Gemini credential is absent, Android signing credentials were not supplied, no iOS project exists in the repository, and authenticated user E2E testing still requires a suitable disposable test account or a deployment setting that permits test sign-up. Video generation was intentionally not fabricated: the repository contains a lesson-package/storyboard pipeline but no finalized media manifest or existing video assets.
 
-> **Release decision:** BLOCKED for public production launch until the external blockers below are resolved and the authenticated end-to-end tests are rerun against the active production services.
+> **Release decision:** **BLOCKED for public production launch**, while the database, web build, Android debug build, unsigned release bundle, Community RLS, and unauthenticated AI gate are verified.
 
 ## Status by area
 
 | Area | Status | Verified evidence or remaining condition |
 |---|---|---|
-| Repository preservation and architecture | **COMPLETE** | Existing React/Vite/Express/Capacitor structure was retained; fixes were applied in place. |
-| TypeScript and web build | **COMPLETE** | `pnpm lint` and `pnpm build` pass. Vite reports only a non-blocking bundle-size warning. |
-| Course browser and lesson experience | **PARTIALLY COMPLETE** | Existing A1–C1 browser, fallback catalog, lesson stages, quiz, speech assessment, and progress calls remain present. Remote curriculum data cannot be verified while Supabase is inactive. |
-| Authentication | **PARTIALLY COMPLETE** | Offline mode no longer calls a placeholder Supabase endpoint. Profile bootstrap is idempotent after authentication. Remote registration, login, logout, and session persistence remain unverified. |
-| Profile and progress persistence | **PARTIALLY COMPLETE** | Progress hydration, completed-lesson restoration, idempotent local XP display, `user_progress` upsert conflict handling, and `xp_earned` schema support were added. Remote writes require the migration and active Supabase project. |
-| Community | **PARTIALLY COMPLETE** | Posts, comments, reactions, pagination, ownership-aware UI, and offline demo behavior are implemented. Production use requires applying the migration and verifying RLS remotely. |
-| AI Tutor and AI Teacher APIs | **PARTIALLY COMPLETE** | Frontend AI calls now forward the Supabase bearer token. Production AI routes fail closed without authenticated Supabase validation and a Gemini key, and include a bounded per-user/IP request window. Live authenticated AI calls were not possible without production credentials. |
-| Security and configuration | **PARTIALLY COMPLETE** | Concrete Supabase identifiers were removed from source, tests, and documentation; error responses no longer return upstream exception messages; `.env*` protection remains active. External secret rotation and deployment-secret configuration are still required. |
-| Payments/subscriptions | **BLOCKED** | Simulated client-side upgrades were removed. No provider, checkout, server verification, webhook handler, or billing credentials exist in the repository. |
-| Android package and debug release | **COMPLETE for debug; BLOCKED for signed release** | Package identity is now `com.ioi.englishspeaking`; Capacitor sync and `assembleDebug` pass. Signing configuration and release credentials are absent. |
-| iOS | **NOT COMPLETE** | No iOS project is present in the repository, so App Store readiness cannot be claimed. |
-| Video production | **NOT STARTED** | No `.mp4`, `.mov`, or `.webm` assets were generated or added. |
+| Repository preservation and architecture | **COMPLETE** | Existing React/Vite/Express/Capacitor structure retained; changes were applied in place. |
+| TypeScript and web build | **COMPLETE** | `pnpm lint` and `pnpm build` pass. The Vite bundle-size warning is non-blocking. |
+| Supabase production project | **COMPLETE** | Project `jipmxnqbndgkwnlpdrkf` restored and verified as `ACTIVE_HEALTHY`. |
+| Supabase migrations and curriculum | **COMPLETE** | Existing migrations `001`–`005`, plus `community_progress_hardening` and `revoke_exposed_function_exec`, are recorded. Live course, level, unit, lesson, vocabulary, dialogue, grammar, quiz, and speaking-practice reads pass. |
+| Authentication | **PARTIALLY COMPLETE** | Offline initialization is safe and production AI routes require a bearer token. Full disposable-user sign-up and re-login could not be completed because the provider rejected the reserved `example.com` test address; no test account was created. |
+| Profile and progress persistence | **IMPLEMENTED; E2E PENDING** | Profile bootstrap, progress hydration, deterministic XP persistence, unique `(user_id, lesson_id)` upsert support, and `xp_earned` are implemented and migrated. Authenticated write/readback requires a valid disposable test account. |
+| Community | **COMPLETE for backend/RLS smoke coverage** | Community posts, comments, reactions, pagination, ownership-aware UI, tables, grants, and RLS are present. Anonymous public-read, anonymous-write rejection, and private-progress non-exposure checks pass. |
+| AI Tutor and AI Teacher APIs | **SECURE GATE VERIFIED; PROVIDER PENDING** | Frontend AI calls use the authenticated API wrapper. Production unauthenticated speech assessment returns HTTP `401`. `GEMINI_API_KEY` is intentionally absent from the current environment, so authenticated live Gemini generation remains pending. |
+| Database security | **COMPLETE** | Supabase security advisors returned zero lints after revoking client execution of exposed `SECURITY DEFINER` helper/trigger functions. |
+| Payments/subscriptions | **BLOCKED** | Simulated client-side upgrades were removed. No provider, checkout, server verification, webhook handler, or billing credentials exist. |
+| Android | **DEBUG AND UNSIGNED RELEASE COMPLETE** | Capacitor sync, `assembleDebug`, and `bundleRelease` pass. Package is `com.ioi.englishspeaking`. The release AAB is not signed. |
+| iOS | **NOT COMPLETE** | No `ios/` project is present and `xcodebuild` is unavailable in the Linux build environment. |
+| Video production | **NOT STARTED** | No `.mp4`, `.mov`, or `.webm` assets exist. The current implementation generates structured lesson packages/storyboards rather than final media files. |
 
-## Implemented changes
+## Implemented repository changes
 
 ### Supabase and data layer
 
-A new migration was added at `supabase/migrations/0001_production_schema.sql`. It defines the curriculum tables, user profiles, progress with unique `(user_id, lesson_id)` conflict handling, subscriptions, community posts, comments, reactions, indexes, profile bootstrap trigger, timestamps, RLS policies, grants, and restricted helper RPC execution. Curriculum tables are client-readable; user-owned data is restricted to the authenticated owner; subscription writes are intentionally not exposed to the client.
+The repository contains the original schema migration at `supabase/migrations/0001_production_schema.sql`, plus the additive production migration `supabase/migrations/006_community_progress_hardening.sql`. The additive migration adds `xp_earned`, a unique progress upsert key, subscription provider identifiers, Community posts/comments/reactions, indexes, timestamp handling, grants, and ownership-aware RLS policies without deleting existing rows.
 
-The client data layer now includes profile bootstrap, bounded community reads, post/comment/reaction operations, progress hydration, and deterministic XP persistence. The app still supports a safe offline demo catalog when public Supabase variables are absent, but the UI labels that state explicitly instead of presenting it as production persistence.
+The migration `supabase/migrations/007_revoke_exposed_function_exec.sql` removes public and authenticated execution privileges from helper and trigger functions flagged by the Supabase security advisors. Live inspection confirms RLS is enabled on all inspected public tables, the Community tables exist, progress includes `xp_earned`, and subscription rows include provider identifiers.
 
-### Authentication and AI API security
+### Authentication, progress, and AI security
 
-Authentication initialization is now guarded by `isSupabaseConfigured`, preventing the unauthenticated demo from attempting network requests against a placeholder project. After sign-up or sign-in, the client performs an idempotent profile upsert for the authenticated user.
+Authentication initialization is guarded by Supabase configuration detection, preventing offline demo mode from calling a placeholder endpoint. After sign-up or sign-in, the client performs idempotent profile bootstrap. Progress hydration restores completed lessons and persisted XP; lesson completion uses a deterministic upsert rather than repeatedly awarding local-only XP.
 
-All frontend calls to the Express AI routes now use `src/lib/api.ts`, which forwards the current Supabase access token. In production, `/api/gemini/*` requires a valid bearer token checked by the server against Supabase, rejects unauthenticated calls, requires `GEMINI_API_KEY`, and limits requests to 20 per minute per bearer/IP key. Server error responses use stable generic messages while detailed errors remain server-side.
+All frontend AI requests use `src/lib/api.ts`, which forwards the current Supabase access token. In production, Gemini routes require a valid bearer token, fail closed when `GEMINI_API_KEY` is missing, and apply a bounded per-user/IP request window. Server responses use stable generic error messages while detailed failures remain server-side.
 
-### Community persistence
+### Community persistence and billing safety
 
-`CommunityView` is no longer only a local React list. When Supabase is configured and the migration is applied, it loads posts with reply/reaction counts, creates posts, loads replies, creates replies, and persists reactions. When Supabase is not configured, it clearly identifies the session-only demo mode rather than implying production persistence.
+`CommunityView` loads and mutates backend-backed posts, replies, and reactions when Supabase is configured and clearly labels offline demo mode when it is not. The live RLS smoke test confirmed public post reads, rejected anonymous Community inserts, and prevented anonymous access to private progress.
 
-### Billing safety
-
-The prior simulated upgrade path was removed. Paid-plan buttons now remain disabled with an explicit “Billing setup required” state, and the current plan is read from the authenticated subscription query when available. This prevents a client-only state mutation from representing a verified payment.
+The simulated upgrade path was removed. Paid-plan controls remain disabled until a real provider adapter, checkout flow, server-side verification, webhook processing, and entitlement synchronization are supplied. Client state cannot represent an unverified paid subscription.
 
 ### Android release preparation
 
-The following values are aligned with the requested production identity:
-
-| Setting | Value |
+| Setting | Verified value |
 |---|---|
 | Application name | `I O I English Speaking` |
 | Capacitor application ID | `com.ioi.englishspeaking` |
 | Android namespace | `com.ioi.englishspeaking` |
 | Android application ID | `com.ioi.englishspeaking` |
 | Version name/code | `1.0` / `1` |
-| Web output | `dist` |
+| Debug APK | `android/app/build/outputs/apk/debug/app-debug.apk` |
+| Release AAB | `android/app/build/outputs/bundle/release/app-release.aab` |
 
-The Android entry activity was moved to the matching package path. The ignored `android/local.properties` file points to the local SDK only and is not a repository credential.
+The debug APK is approximately 4.4 MB and the unsigned release AAB is approximately 3.1 MB. The Android package identity was verified with `aapt`. Keystore material was not created or committed.
 
-## Production blockers
+## Remaining launch blockers
 
-The following items prevent a public launch and cannot be fabricated inside the repository.
-
-| Blocker | Why it is required | Configuration or action |
+| Blocker | Why it is required | Required action |
 |---|---|---|
-| Active Supabase production project | Auth, curriculum, progress, community, and subscription reads require a running project. The selected project currently reports `INACTIVE`. | Restore or select the production project, then configure `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY`. |
-| Applied Supabase migration and seed data | The repository migration is present but remote schema/data were not verifiable. | Apply `supabase/migrations/0001_production_schema.sql`, seed the A1 curriculum, then run `pnpm test:supabase` with deployment variables. |
-| Gemini production credential | Production AI routes intentionally return 503 when the server credential is absent. | Configure `GEMINI_API_KEY` in the server deployment secret manager. |
-| Payment provider selection and credentials | Real billing requires provider-specific checkout, verification, and webhook processing. No provider was selected and no credentials exist. | Supply the provider and configure `PAYMENT_PUBLIC_KEY`, `PAYMENT_SECRET`, and `PAYMENT_WEBHOOK_SECRET` only after implementing the provider-specific server/webhook adapter. |
-| Android signing credentials | A debug APK is not a distributable signed release. | Supply the organization keystore, alias, `ANDROID_KEYSTORE_PASSWORD`, and `ANDROID_KEY_PASSWORD` through the release system; never commit them. |
-
-## Required pre-launch verification
-
-After the blockers are resolved, run the smoke test with production variables and verify registration, email/password login, logout, session persistence, profile creation, course reads, lesson reads, lesson completion, progress hydration after restart, XP persistence, community post/comment/reaction ownership, AI authentication, rate limiting, and subscription reads.
-
-On a real Android device, install the signed build and verify launch, registration, login, A1 → Unit 1 → Lesson navigation, completion, progress and XP restoration, AI Tutor access, community creation, app restart, logout, and login again. Payment verification must be tested in the provider’s sandbox before any production transaction is enabled.
+| Gemini production credential | Authenticated AI generation cannot call the provider without a server-side key. | Configure `GEMINI_API_KEY` in the deployment secret manager and run authenticated AI tests. |
+| Payment provider and webhook implementation | Paid entitlements must be created only from verified provider events. | Select a provider, implement checkout, signature verification, webhook handling, subscription reconciliation, and sandbox tests. Configure secrets outside Git. |
+| Android signing credentials | The AAB currently builds but is not distributable as a signed release. | Supply the organization keystore, alias, and passwords through the release system; never commit them. |
+| Authenticated E2E test account | Full sign-up, profile, progress writeback, logout, and re-login require a valid disposable account or a controlled test-auth configuration. | Provide a suitable test account/domain or enable a safe test-auth configuration, then rerun the E2E suite. |
+| iOS project and Apple signing | The repository has no iOS target and cannot be built on the current Linux environment. | Generate the Capacitor iOS project on macOS, configure bundle ID/signing, and test on a real device. |
+| Final lesson video media | No finalized media asset list or video files are present; the current pipeline is a structured lesson-package generator. | Approve the exact lesson/media manifest, provide the production media generation/provider configuration, generate assets, upload them to storage, and update `lessons.video_url`. |
 
 ## Validation performed
 
 | Check | Result |
 |---|---|
+| Supabase project restore | **PASS**; project reached `ACTIVE_HEALTHY` |
+| Supabase migration history | **PASS**; additive migrations recorded as `community_progress_hardening` and `revoke_exposed_function_exec` |
+| Supabase live schema inspection | **PASS**; curriculum, progress, subscription, and Community tables verified |
+| Supabase curriculum smoke test | **PASS**; public course and lesson content queries returned expected sample data |
+| Supabase security advisors | **PASS**; zero security lints after remediation |
+| Community RLS smoke test | **PASS**; public read allowed, anonymous insert rejected, private progress not exposed |
+| Auth/profile/progress E2E | **BLOCKED** at disposable sign-up because the provider rejected the reserved `example.com` address; no account or data was created |
 | `pnpm lint` | **PASS** |
-| `pnpm build` | **PASS**; non-blocking Vite bundle-size warning remains |
-| `pnpm test:supabase` | **SKIP**; deployment Supabase variables are not configured in the current environment |
+| `pnpm build` | **PASS**; non-blocking bundle-size warning remains |
 | Capacitor Android sync | **PASS** |
-| Android debug compilation | **PASS** with `./gradlew assembleDebug --no-daemon` |
-| Production server health | **PASS**: `/api/health` returned status `ok` |
-| Production AI unauthenticated request | **PASS**: returned HTTP `401` |
-| `git diff --check` | **PASS** before final documentation update; rerun after committing any additional edits |
-| Remote Supabase schema/migrations | **BLOCKED** by inactive project and connection timeout |
-| Signed Android release | **BLOCKED** by missing organization signing credentials |
-| iOS build/release | **NOT AVAILABLE**; no iOS project present |
-| Video assets | **NOT STARTED** |
+| Android `assembleDebug` | **PASS** |
+| Android `bundleRelease` | **PASS**; unsigned AAB |
+| Android package identity | **PASS**; `com.ioi.englishspeaking` |
+| Production server health | **PASS**; `/api/health` returned `{"status":"ok","app":"I O I Education Network"}` |
+| Production AI unauthenticated request | **PASS**; returned HTTP `401` |
+| `git diff --check` | **PASS** |
+| iOS build/release | **NOT AVAILABLE**; no iOS project and no Xcode |
+| Video asset inventory | **PASS**; no existing video media found; generation intentionally deferred until the approved production-media step |
 
 ## Final classification
 
+### COMPLETE
+
+The Supabase project is active and migrated. The live curriculum smoke test passes. Database security-advisor findings are cleared. Community RLS is covered by a live anonymous smoke test. The web build, Android debug APK, and unsigned Android release AAB build successfully with the required package identity.
+
 ### BLOCKER
 
-Public production launch is blocked by the inactive/unverified Supabase project, missing deployment secrets, absent payment provider integration, and missing Android signing credentials. The current repository must not be represented as having live payments or a verified production database.
+Public launch remains blocked by missing Gemini deployment credentials, absent payment-provider integration, missing Android signing credentials, absent iOS project/signing, and the need for authenticated real-device/E2E verification. These requirements cannot be fabricated safely inside the repository.
 
-### REQUIRED
+### OPTIONAL FOLLOW-UP
 
-Restore Supabase, apply and verify the migration and curriculum seed, configure Gemini and Supabase deployment secrets, select and implement a payment provider adapter with verified webhooks, create a signed Android release, and complete authenticated real-device testing.
+The next quality improvements are bundle splitting, dedicated browser/device E2E automation, moderation tooling beyond baseline ownership/RLS controls, iOS generation on macOS, and approved lesson-video generation after the final media manifest is supplied.
 
-### OPTIONAL
-
-Split the large client bundle with dynamic imports, add a dedicated iOS project and signing configuration, add automated browser/device end-to-end tests, add moderation tooling beyond the baseline ownership/RLS controls, and generate video assets in a separate explicitly approved production step.
-
-> **VIDEO PRODUCTION NOT STARTED.** No video assets were generated or added during this task.
+> **VIDEO PRODUCTION DEFERRED.** No video assets were generated or added because the repository does not define a complete production media manifest and the server-side Gemini credential is not configured.
 
 ## References
 
 [1]: https://supabase.com/docs/guides/database/postgres/row-level-security "Supabase Row Level Security documentation"
 [2]: https://supabase.com/docs/guides/auth/server-side/nextjs "Supabase server-side authentication guidance"
 [3]: https://capacitorjs.com/docs/android "Capacitor Android documentation"
+[4]: https://supabase.com/docs/guides/database/database-linter "Supabase database linter documentation"
