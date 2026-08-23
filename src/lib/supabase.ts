@@ -1,15 +1,22 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './database.types';
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://jipmxnqbndgkwnlpdrkf.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_NUoQd5OHcYZhcvPb_LnjXg_miq9RZwt';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
+// Keep the demo usable without shipping a project URL or token in source control.
+export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
+
+export const supabase = createClient<Database>(
+  supabaseUrl || 'https://placeholder.supabase.co',
+  supabaseAnonKey || 'placeholder-anon-key',
+  {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
+    },
   },
-});
+);
 
 // Auth helper functions
 export const auth = {

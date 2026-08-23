@@ -1,245 +1,78 @@
 import React, { useState } from "react";
-import { UserProfile, AITeacher, PlanType } from "./types";
-import { INITIAL_USER, AI_TEACHERS } from "./data/initialData";
+import type { AITeacher, PlanType, UserProfile } from "./types";
+import { AI_TEACHERS, INITIAL_USER } from "./data/initialData";
 import { AuthProvider, useAuth } from "./lib/AuthContext";
+import { db, isSupabaseConfigured } from "./lib/supabase";
 import { AuthModal } from "./components/AuthModal";
 import { MobileContainer } from "./components/MobileContainer";
 import { HeaderNav } from "./components/HeaderNav";
 import { OnboardingFlow } from "./components/OnboardingFlow";
 import { TeacherAvatarCard } from "./components/TeacherAvatarCard";
 import { VoiceChatStudio } from "./components/VoiceChatStudio";
-import { LessonPlayer } from "./components/LessonPlayer";
 import { PronunciationStudio } from "./components/PronunciationStudio";
-import { EssayEvaluator } from "./components/EssayEvaluator";
-import { AiContentStudio } from "./components/AiContentStudio";
 import { SubscriptionModal } from "./components/SubscriptionModal";
 import { CertificateModal } from "./components/CertificateModal";
 import { ProgressAnalytics } from "./components/ProgressAnalytics";
-import { VideoLessonStudio } from "./components/VideoLessonStudio";
 import { CurriculumDatabaseView } from "./components/CurriculumDatabaseView";
 import { LessonDatabasePlayer } from "./components/LessonDatabasePlayer";
-import { Sparkles, MessageSquare, Mic, Layers, Award, Flame } from "lucide-react";
+import { HomeDashboard } from "./components/HomeDashboard";
+import { CommunityView } from "./components/CommunityView";
+import { Sparkles } from "lucide-react";
 
 function AppContent() {
-  const { user: authUser, session, loading: authLoading, signOut, profile } = useAuth();
+  const { user: authUser, loading: authLoading, signOut, profile } = useAuth();
   const [showAuth, setShowAuth] = useState(false);
-  const [activeTab, setActiveTab] = useState<string>("teachers");
+  const [activeTab, setActiveTab] = useState("home");
   const [selectedTeacher, setSelectedTeacher] = useState<AITeacher>(AI_TEACHERS[0]);
   const [activeLessonId, setActiveLessonId] = useState<string | null>(null);
-
-  // Local user state (synced with Supabase)
   const [user, setUser] = useState<UserProfile>(INITIAL_USER);
-
-  // Modals state
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showSubscription, setShowSubscription] = useState(false);
   const [showCertificate, setShowCertificate] = useState(false);
 
-  // Sync auth user to local state
   React.useEffect(() => {
-    if (authUser && profile) {
-      setUser((prev) => ({
-        ...prev,
-        id: authUser.id,
-        email: authUser.email || prev.email,
-        name: profile.full_name || prev.name,
-      }));
-    }
+    if (!authUser) return;
+    setUser((previous) => ({ ...previous, id: authUser.id, email: authUser.email || previous.email, name: profile?.full_name || authUser.user_metadata?.full_name || previous.name }));
   }, [authUser, profile]);
 
-  const handleUpdateUser = (updatedFields: Partial<UserProfile>) => {
-    setUser((prev) => ({ ...prev, ...updatedFields }));
+  const updateUser = (fields: Partial<UserProfile>) => setUser((previous) => ({ ...previous, ...fields }));
+  const handleUpdateUser = (fields: Partial<UserProfile>) => {
+    updateUser(fields);
+    if (authUser && isSupabaseConfigured) {
+      void db.updateProfile(authUser.id, { full_name: fields.name, native_language: fields.nativeLanguage });
+    }
   };
-
-  const handleCompleteUnit = (xpGained: number) => {
-    setUser((prev) => ({
-      ...prev,
-      totalXp: prev.totalXp + xpGained,
-    }));
+  const handleCompleteLesson = (xpGained: number) => {
+    updateUser({ totalXp: user.totalXp + xpGained, completedLessonIds: activeLessonId ? Array.from(new Set([...user.completedLessonIds, activeLessonId])) : user.completedLessonIds });
     setActiveLessonId(null);
   };
+  const openTutor = () => setActiveTab("tutor");
+  const openTeachers = () => setActiveTab("teachers");
+  const openCourse = () => setActiveTab("course");
+  const openProfile = () => setActiveTab("profile");
 
-  const handleUpgradePlan = (newPlan: PlanType) => {
-    setUser((prev) => ({ ...prev, plan: newPlan }));
-  };
+  if (authLoading) return <div className="flex min-h-screen items-center justify-center bg-slate-950 text-center"><div><div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" /><p className="text-sm text-slate-400">Loading your IOI learning space…</p></div></div>;
 
-  const handleStartVoiceChat = (teacher: AITeacher) => {
-    setSelectedTeacher(teacher);
-    setActiveTab("voice");
-  };
+  return <><MobileContainer activeTab={activeTab} setActiveTab={setActiveTab} userStreak={user.streakDays} userXp={user.totalXp} userPlan={user.plan} onOpenSubscription={() => setShowSubscription(true)} isAuthenticated={!!authUser} userEmail={authUser?.email} userName={user.name} onSignIn={() => setShowAuth(true)} onSignOut={signOut}><HeaderNav user={user} activeTab={activeTab} setActiveTab={setActiveTab} onOpenSubscription={() => setShowSubscription(true)} onOpenOnboarding={() => setShowOnboarding(true)} isAuthenticated={!!authUser} userEmail={authUser?.email} userName={user.name} onSignIn={() => setShowAuth(true)} onSignOut={signOut} />
+      {activeTab === "home" && <HomeDashboard user={user} onOpenCourse={openCourse} onOpenTutor={openTutor} onOpenTeachers={openTeachers} onOpenProfile={openProfile} />}
+      {activeTab === "course" && <CurriculumDatabaseView completedLessonIds={user.completedLessonIds} onSelectLesson={setActiveLessonId} />}
+      {activeTab === "teachers" && <TeachersView selectedTeacher={selectedTeacher} onSelect={setSelectedTeacher} onStartChat={(teacher) => { setSelectedTeacher(teacher); openTutor(); }} />}
+      {activeTab === "tutor" && <VoiceChatStudio teacher={selectedTeacher} user={user} onBack={openTeachers} />}
+      {activeTab === "community" && <CommunityView isAuthenticated={!!authUser} onSignIn={() => setShowAuth(true)} />}
+      {activeTab === "profile" && <ProgressAnalytics user={user} onOpenSubscription={() => setShowSubscription(true)} onOpenCertificate={() => setShowCertificate(true)} />}
+      {activeTab === "speech" && <PronunciationStudio user={user} />}
+    </MobileContainer>
 
-  const handleAuthComplete = () => {
-    setShowAuth(false);
-    setShowOnboarding(true);
-  };
-
-  const handleSelectLesson = (lessonId: string) => {
-    setActiveLessonId(lessonId);
-  };
-
-  // If auth is still loading, show loading state
-  if (authLoading) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-slate-400 text-sm">Loading I O I Education Network...</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <>
-      <MobileContainer
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        userStreak={user.streakDays}
-        userXp={user.totalXp}
-        userPlan={user.plan}
-        onOpenSubscription={() => setShowSubscription(true)}
-        isAuthenticated={!!authUser}
-        userEmail={authUser?.email}
-        userName={user.name}
-        onSignIn={() => setShowAuth(true)}
-        onSignOut={signOut}
-      >
-        {/* Top Mobile App Navigation Bar */}
-        <HeaderNav
-          user={user}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          onOpenSubscription={() => setShowSubscription(true)}
-          onOpenOnboarding={() => setShowOnboarding(true)}
-          isAuthenticated={!!authUser}
-          onSignIn={() => setShowAuth(true)}
-          onSignOut={signOut}
-        />
-
-        {/* Tab 1: AI Avatar Teachers Overview */}
-        {activeTab === "teachers" && (
-          <div className="p-4 sm:p-6 space-y-5">
-            {/* Hero Banner */}
-            <div className="bg-gradient-to-r from-indigo-900 via-slate-900 to-cyan-900 border border-slate-800 p-5 rounded-3xl space-y-2 relative overflow-hidden shadow-xl">
-              <div className="flex items-center space-x-2">
-                <Sparkles className="w-5 h-5 text-indigo-400" />
-                <h1 className="text-base font-extrabold text-white tracking-tight">AI Avatar Teachers</h1>
-              </div>
-              <p className="text-xs text-slate-300 leading-relaxed max-w-lg">
-                Practice 1-on-1 speaking 24/7 with native AI teachers specialized in conversation, business English, grammar, and exam preparation.
-              </p>
-            </div>
-
-            {/* Teacher Cards Grid */}
-            <div className="space-y-3">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Available AI Personal Teachers (5)</h3>
-              <div className="grid grid-cols-1 gap-3">
-                {AI_TEACHERS.map((teacher) => (
-                  <TeacherAvatarCard
-                    key={teacher.id}
-                    teacher={teacher}
-                    isSelected={selectedTeacher.id === teacher.id}
-                    onSelect={(t) => setSelectedTeacher(t)}
-                    onStartChat={handleStartVoiceChat}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Tab 2: CEFR Curriculum Pathway - Database-driven */}
-        {activeTab === "curriculum" && (
-          <CurriculumDatabaseView
-            onSelectLesson={handleSelectLesson}
-          />
-        )}
-
-        {/* Tab AI Video Lessons */}
-        {activeTab === "video" && (
-          <VideoLessonStudio
-            user={user}
-            onUpdateUser={(updated) => handleUpdateUser(updated)}
-            onStartRoleplay={(sc, msg) => {
-              setActiveTab("voice");
-            }}
-          />
-        )}
-
-        {/* Tab 3: Real-Time AI Teacher Voice Conversation */}
-        {activeTab === "voice" && (
-          <VoiceChatStudio
-            teacher={selectedTeacher}
-            user={user}
-            onBack={() => setActiveTab("teachers")}
-          />
-        )}
-
-        {/* Tab 4: Speech & Pronunciation Lab */}
-        {activeTab === "pronounce" && <PronunciationStudio user={user} />}
-
-        {/* Tab 5: AI Essay & Writing Examiner */}
-        {activeTab === "essay" && <EssayEvaluator user={user} />}
-
-        {/* Tab 6: On-Demand AI Scenario Generator */}
-        {activeTab === "studio" && <AiContentStudio user={user} />}
-
-        {/* Tab 7: Learner Analytics & Saved Vocabulary */}
-        {activeTab === "analytics" && (
-          <ProgressAnalytics
-            user={user}
-            onOpenSubscription={() => setShowSubscription(true)}
-            onOpenCertificate={() => setShowCertificate(true)}
-          />
-        )}
-      </MobileContainer>
-
-      {/* Modals & Overlays */}
-      {showAuth && (
-        <AuthModal
-          onClose={() => setShowAuth(false)}
-          onComplete={handleAuthComplete}
-        />
-      )}
-
-      {showOnboarding && (
-        <OnboardingFlow
-          user={user}
-          onComplete={handleUpdateUser}
-          onClose={() => setShowOnboarding(false)}
-        />
-      )}
-
-      {showSubscription && (
-        <SubscriptionModal
-          currentPlan={user.plan}
-          onUpgradePlan={handleUpgradePlan}
-          onClose={() => setShowSubscription(false)}
-        />
-      )}
-
-      {showCertificate && (
-        <CertificateModal
-          user={user}
-          onClose={() => setShowCertificate(false)}
-        />
-      )}
-
-      {activeLessonId && (
-        <LessonDatabasePlayer
-          lessonId={activeLessonId}
-          onClose={() => setActiveLessonId(null)}
-          onComplete={handleCompleteUnit}
-        />
-      )}
-    </>
-  );
+    {showAuth && <AuthModal onClose={() => setShowAuth(false)} onComplete={() => setShowAuth(false)} />}
+    {showOnboarding && <OnboardingFlow user={user} onComplete={handleUpdateUser} onClose={() => setShowOnboarding(false)} />}
+    {showSubscription && <SubscriptionModal currentPlan={user.plan} onUpgradePlan={(plan: PlanType) => updateUser({ plan })} onClose={() => setShowSubscription(false)} />}
+    {showCertificate && <CertificateModal user={user} onClose={() => setShowCertificate(false)} />}
+    {activeLessonId && <LessonDatabasePlayer lessonId={activeLessonId} onClose={() => setActiveLessonId(null)} onComplete={handleCompleteLesson} onOpenTutor={openTutor} />}
+  </>;
 }
 
-export default function App() {
-  return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
-  );
+function TeachersView({ selectedTeacher, onSelect, onStartChat }: { selectedTeacher: AITeacher; onSelect: (teacher: AITeacher) => void; onStartChat: (teacher: AITeacher) => void }) {
+  return <div className="space-y-5 p-4 sm:p-6"><section className="relative overflow-hidden rounded-3xl border border-indigo-500/20 bg-gradient-to-r from-indigo-950 via-slate-900 to-cyan-950 p-5"><div className="flex items-center gap-2 text-indigo-300"><Sparkles className="h-5 w-5" /><span className="text-xs font-bold uppercase tracking-[0.18em]">AI Teachers</span></div><h1 className="mt-3 text-2xl font-black text-white">Find your speaking coach.</h1><p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-300">Practise with a teacher matched to your goals, accent preference, and confidence level.</p></section><div className="grid gap-3">{AI_TEACHERS.map((teacher) => <TeacherAvatarCard key={teacher.id} teacher={teacher} isSelected={selectedTeacher.id === teacher.id} onSelect={onSelect} onStartChat={onStartChat} />)}</div></div>;
 }
+
+export default function App() { return <AuthProvider><AppContent /></AuthProvider>; }

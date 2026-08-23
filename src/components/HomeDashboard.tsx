@@ -1,0 +1,24 @@
+import React from "react";
+import { ArrowRight, BookOpen, Flame, Mic, Sparkles, Trophy } from "lucide-react";
+import type { UserProfile } from "../types";
+
+interface HomeDashboardProps {
+  user: UserProfile;
+  onOpenCourse: () => void;
+  onOpenTutor: () => void;
+  onOpenTeachers: () => void;
+  onOpenProfile: () => void;
+}
+
+export const HomeDashboard: React.FC<HomeDashboardProps> = ({ user, onOpenCourse, onOpenTutor, onOpenTeachers, onOpenProfile }) => {
+  const firstName = user.name.split(" ")[0];
+  return <div className="space-y-5 p-4 sm:p-6">
+    <section className="relative overflow-hidden rounded-3xl border border-indigo-500/20 bg-gradient-to-br from-indigo-950 via-slate-900 to-cyan-950 p-6 shadow-xl"><div className="relative z-10 max-w-xl"><div className="mb-3 flex items-center gap-2 text-cyan-300"><Sparkles className="h-5 w-5" /><span className="text-xs font-bold uppercase tracking-[0.18em]">Your speaking journey</span></div><h1 className="text-3xl font-black tracking-tight text-white">Good to see you, {firstName}.</h1><p className="mt-3 text-sm leading-relaxed text-slate-300">Keep today’s momentum with a short, focused English session built around your <strong className="text-white">{user.currentLevel}</strong> goal.</p><div className="mt-5 flex flex-wrap gap-2"><button onClick={onOpenCourse} className="flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-black text-slate-950 hover:bg-cyan-100">Continue course <ArrowRight className="h-4 w-4" /></button><button onClick={onOpenTutor} className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-bold text-white hover:bg-white/15">Talk to AI Tutor</button></div></div><div className="absolute -right-16 -top-16 h-48 w-48 rounded-full bg-cyan-400/10 blur-2xl" /></section>
+    <div className="grid grid-cols-3 gap-2"><Metric icon={<Flame className="h-4 w-4 text-amber-300" />} value={`${user.streakDays}d`} label="streak" /><Metric icon={<Trophy className="h-4 w-4 text-indigo-300" />} value={`${user.totalXp}`} label="XP" /><Metric icon={<Mic className="h-4 w-4 text-emerald-300" />} value={`${user.fluencyScore}%`} label="fluency" /></div>
+    <section><div className="mb-3 flex items-center justify-between"><h2 className="text-sm font-bold text-white">Your next best actions</h2><button onClick={onOpenProfile} className="text-xs font-bold text-indigo-300 hover:text-white">View progress</button></div><div className="grid gap-3 sm:grid-cols-3"><ActionCard icon={<BookOpen className="h-5 w-5" />} title="Continue Course" text={`Explore ${user.currentLevel} lessons`} onClick={onOpenCourse} color="indigo" /><ActionCard icon={<Sparkles className="h-5 w-5" />} title="Meet a Teacher" text="Choose a speaking coach" onClick={onOpenTeachers} color="cyan" /><ActionCard icon={<Mic className="h-5 w-5" />} title="Speak Out Loud" text="Practise with instant feedback" onClick={onOpenTutor} color="emerald" /></div></section>
+    <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5"><p className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">Daily target</p><div className="mt-3 flex items-end justify-between gap-3"><div><p className="text-2xl font-black text-white">{user.dailyMinutesGoal} minutes</p><p className="mt-1 text-xs text-slate-400">Small, consistent practice beats occasional long sessions.</p></div><div className="h-12 w-12 rounded-2xl bg-emerald-500/10 p-3 text-emerald-300"><Trophy className="h-full w-full" /></div></div><div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-800"><div className="h-full w-2/3 rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400" /></div></section>
+  </div>;
+};
+
+function Metric({ icon, value, label }: { icon: React.ReactNode; value: string; label: string }) { return <div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-3 text-center"><div className="flex items-center justify-center gap-1.5">{icon}<span className="text-lg font-black text-white">{value}</span></div><p className="mt-1 text-[10px] uppercase tracking-wider text-slate-500">{label}</p></div>; }
+function ActionCard({ icon, title, text, onClick, color }: { icon: React.ReactNode; title: string; text: string; onClick: () => void; color: "indigo" | "cyan" | "emerald" }) { const colors = { indigo: "text-indigo-300 bg-indigo-500/10", cyan: "text-cyan-300 bg-cyan-500/10", emerald: "text-emerald-300 bg-emerald-500/10" }; return <button onClick={onClick} className="group rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-left transition hover:-translate-y-0.5 hover:border-slate-600"><div className={`mb-4 flex h-10 w-10 items-center justify-center rounded-xl ${colors[color]}`}>{icon}</div><p className="font-bold text-white">{title}</p><p className="mt-1 text-xs text-slate-400">{text}</p><ArrowRight className="mt-4 h-4 w-4 text-slate-600 transition group-hover:translate-x-1 group-hover:text-white" /></button>; }
