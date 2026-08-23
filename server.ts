@@ -35,18 +35,22 @@ const paymentPriceIds: Record<string, string | undefined> = {
 };
 const requestWindows = new Map<string, { startedAt: number; count: number }>();
 const GEMINI_FALLBACK_TEXT_MODEL = process.env.GEMINI_FALLBACK_TEXT_MODEL || "gemini-3.6-flash";
+const GEMINI_SECOND_FALLBACK_TEXT_MODEL = process.env.GEMINI_SECOND_FALLBACK_TEXT_MODEL || "gemini-2.5-flash";
 
 async function generateTextContent(ai: GoogleGenAI, request: any) {
-  try {
-    return await ai.models.generateContent(request);
-  } catch (error: any) {
-    const status = Number(error?.status || error?.error?.code);
-    if ((status === 429 || status === 503) && request.model !== GEMINI_FALLBACK_TEXT_MODEL) {
-      console.warn(`Gemini ${request.model} unavailable (${status}); retrying with ${GEMINI_FALLBACK_TEXT_MODEL}.`);
-      return ai.models.generateContent({ ...request, model: GEMINI_FALLBACK_TEXT_MODEL });
+  const models = Array.from(new Set([request.model, GEMINI_FALLBACK_TEXT_MODEL, GEMINI_SECOND_FALLBACK_TEXT_MODEL]));
+  let lastError: unknown;
+  for (const model of models) {
+    try {
+      return await ai.models.generateContent({ ...request, model });
+    } catch (error: any) {
+      lastError = error;
+      const status = Number(error?.status || error?.error?.code);
+      if (status !== 429 && status !== 503) throw error;
+      if (model !== models[models.length - 1]) console.warn(`Gemini ${model} unavailable (${status}); trying the next configured text model.`);
     }
-    throw error;
   }
+  throw lastError || new Error("No Gemini text model is available.");
 }
 
 const cefrSchema = z.enum(["A1", "A2", "B1", "B2", "C1", "C2"]);
@@ -58,7 +62,7 @@ const speechAssessmentSchema = z.object({
   pronunciationScore: z.number().min(0).max(100),
   overallCEFR: cefrSchema,
   feedbackText: nonEmptyText(1200),
-  wordFeedback: z.array(z.object({ word: nonEmptyText(80), accuracy: z.number().min(0).max(100), status: z.enum(["excellent", "good", "needs_practice"]) }).strict()).min(1).max(80),
+  wordFeedback: z.array(z.object({ word: nonEmptyText(80), accuracy: z.number().min(0).max(100), status: nonEmptyText(80) }).strict()).min(1).max(80),
   nativeAlternative: nonEmptyText(500),
 }).strict();
 const teacherResponseSchema = z.object({
