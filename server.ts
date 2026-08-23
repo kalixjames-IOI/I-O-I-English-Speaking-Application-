@@ -5,6 +5,7 @@ import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import { createServer as createViteServer } from "vite";
 import { createHmac, timingSafeEqual } from "crypto";
+import { z } from "zod";
 
 dotenv.config();
 
@@ -24,6 +25,7 @@ const serverSupabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_
 const authClient = serverSupabaseUrl && serverSupabaseAnonKey ? createClient(serverSupabaseUrl, serverSupabaseAnonKey, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
 const serverSupabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const billingAdminClient = serverSupabaseUrl && serverSupabaseServiceRoleKey ? createClient(serverSupabaseUrl, serverSupabaseServiceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+const contentAdminClient = billingAdminClient;
 const paymentProvider = process.env.PAYMENT_PROVIDER || "stripe";
 const paymentSecret = process.env.PAYMENT_SECRET || process.env.STRIPE_SECRET_KEY;
 const paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || process.env.STRIPE_WEBHOOK_SECRET;
@@ -46,6 +48,87 @@ async function generateTextContent(ai: GoogleGenAI, request: any) {
     throw error;
   }
 }
+
+const cefrSchema = z.enum(["A1", "A2", "B1", "B2", "C1", "C2"]);
+const nativeLanguageSchema = z.enum(["Spanish", "Chinese (Mandarin)", "Japanese", "Portuguese", "Arabic", "French", "Vietnamese", "Korean", "German", "Russian", "Hindi", "Turkish", "Indonesian", "Thai"]);
+const nonEmptyText = (max: number) => z.string().trim().min(1).max(max);
+const speechAssessmentSchema = z.object({
+  accuracyScore: z.number().min(0).max(100),
+  fluencyScore: z.number().min(0).max(100),
+  pronunciationScore: z.number().min(0).max(100),
+  overallCEFR: cefrSchema,
+  feedbackText: nonEmptyText(1200),
+  wordFeedback: z.array(z.object({ word: nonEmptyText(80), accuracy: z.number().min(0).max(100), status: z.enum(["excellent", "good", "needs_practice"]) }).strict()).min(1).max(80),
+  nativeAlternative: nonEmptyText(500),
+}).strict();
+const teacherResponseSchema = z.object({
+  reply: nonEmptyText(1200),
+  grammarCorrection: z.string().trim().max(800).nullable().optional(),
+  betterPhrasing: nonEmptyText(800),
+  pronunciationFocus: z.array(nonEmptyText(80)).max(5),
+  followUpQuestion: nonEmptyText(500),
+}).strict();
+const translationResponseSchema = z.object({
+  translatedText: nonEmptyText(1200),
+  literalMeaning: nonEmptyText(1200),
+  culturalNote: nonEmptyText(1200),
+  keyVocabulary: z.array(z.object({ word: nonEmptyText(80), definition: nonEmptyText(500), example: nonEmptyText(500) }).strict()).max(20),
+}).strict();
+const customLessonSchema = z.object({
+  title: nonEmptyText(160),
+  cefrLevel: cefrSchema,
+  description: nonEmptyText(1500),
+  dialogue: z.array(z.object({ speaker: nonEmptyText(80), text: nonEmptyText(600), translation: nonEmptyText(600) }).strict()).min(2).max(30),
+  vocabularyList: z.array(z.object({ term: nonEmptyText(80), phonetic: nonEmptyText(120), definition: nonEmptyText(500) }).strict()).min(1).max(40),
+  speakingPrompts: z.array(nonEmptyText(500)).min(1).max(10),
+}).strict();
+const fullLessonRequestSchema = z.object({ level: cefrSchema.optional(), unitNumber: z.number().int().min(1).max(100), moduleNumber: z.number().int().min(1).max(100), topicTitle: nonEmptyText(240), userNativeLang: nativeLanguageSchema }).strict();
+const fullLessonResponseSchema = z.object({
+  id: nonEmptyText(160).optional(), level: cefrSchema.optional(), unitNumber: z.number().int().min(1), moduleNumber: z.number().int().min(1), title: nonEmptyText(200), subtitle: nonEmptyText(300).optional(), category: nonEmptyText(80).optional(), estimatedMinutes: z.number().int().min(1).max(240).optional(), xpReward: z.number().int().min(0).max(10000).optional(), learningObjective: nonEmptyText(1500),
+  grammarExplanation: z.object({ summary: nonEmptyText(1500), rules: z.array(z.object({ ruleTitle: nonEmptyText(160), explanation: nonEmptyText(800), example: nonEmptyText(500) }).strict()).min(1).max(20), commonMistakes: z.array(z.object({ incorrect: nonEmptyText(500), correct: nonEmptyText(500), reason: nonEmptyText(800) }).strict()).max(20) }).strict(),
+  vocabularyList: z.array(z.object({ term: nonEmptyText(100), phonetic: nonEmptyText(160), partOfSpeech: nonEmptyText(80).optional(), definition: nonEmptyText(600), example: nonEmptyText(600).optional(), nativeTranslation: nonEmptyText(600).optional() }).strict()).min(1).max(50),
+  exampleSentences: z.array(z.object({ english: nonEmptyText(600), nativeTranslation: nonEmptyText(600), contextNote: nonEmptyText(600) }).strict()).min(1).max(30),
+  listeningScript: z.object({ title: nonEmptyText(200), audioText: nonEmptyText(2000), speakers: z.array(z.object({ speaker: nonEmptyText(80), text: nonEmptyText(600), translation: nonEmptyText(600) }).strict()).min(1).max(30), comprehensionCheck: z.array(z.object({ question: nonEmptyText(500), options: z.array(nonEmptyText(200)).min(2).max(8), correctIndex: z.number().int().min(0).max(7), explanation: nonEmptyText(800) }).strict()).min(1).max(20) }).strict(),
+  speakingPractice: z.object({ targetPhrases: z.array(z.object({ phrase: nonEmptyText(600), phonetic: nonEmptyText(160), translation: nonEmptyText(600), pronunciationTip: nonEmptyText(600) }).strict()).min(1).max(20), phonemeFocus: z.array(nonEmptyText(80)).max(20) }).strict(),
+  aiConversationScenario: z.object({ scenarioTitle: nonEmptyText(200), roleplayRole: nonEmptyText(120), teacherRole: nonEmptyText(120), initialMessage: nonEmptyText(800), suggestedResponses: z.array(nonEmptyText(500)).min(1).max(20), contextGoal: nonEmptyText(800) }).strict(),
+  pronunciationPractice: z.object({ stressPatterns: z.array(z.object({ word: nonEmptyText(100), stressedSyllable: nonEmptyText(120), phonetic: nonEmptyText(160) }).strict()).max(30), minimalPairs: z.array(z.object({ wordA: nonEmptyText(100), wordB: nonEmptyText(100), difference: nonEmptyText(300) }).strict()).max(30), intonationType: nonEmptyText(300) }).strict(),
+  exercises: z.array(z.object({ id: nonEmptyText(100), type: nonEmptyText(80), prompt: nonEmptyText(800), options: z.array(nonEmptyText(200)).max(10).optional(), correctAnswer: nonEmptyText(500), hint: nonEmptyText(500) }).strict()).max(30),
+  quiz: z.array(z.object({ id: nonEmptyText(100), question: nonEmptyText(800), options: z.array(nonEmptyText(200)).min(2).max(8), correctIndex: z.number().int().min(0).max(7), explanation: nonEmptyText(800) }).strict()).min(1).max(30),
+  homework: z.object({ assignmentTitle: nonEmptyText(200), instructions: nonEmptyText(1200), writingPrompt: nonEmptyText(800).optional(), speakingTaskPrompt: nonEmptyText(800).optional() }).strict(),
+  aiEvaluationCriteria: z.object({ targetGrammarMastery: z.number().min(0).max(100), targetVocabularyDiversity: z.number().min(0).max(100), accuracyThresholdPercent: z.number().min(0).max(100), keyFeedbackFocusPoints: z.array(nonEmptyText(160)).max(20) }).strict(),
+}).passthrough();
+const roadmapSchema = z.object({
+  curriculumName: nonEmptyText(180), assignedCEFR: cefrSchema, weeklyFocus: z.array(nonEmptyText(160)).min(1).max(8), recommendedTeacher: nonEmptyText(120),
+  dailyPlan: z.array(z.object({ day: nonEmptyText(40), topic: nonEmptyText(180), minutes: z.number().int().min(5).max(240) }).strict()).min(1).max(14), aiTip: nonEmptyText(800),
+}).strict();
+function parseValidatedJson<T>(response: { text?: string }, schema: z.ZodType<T>): T {
+  const parsed = JSON.parse(response.text || "{}");
+  const result = schema.safeParse(parsed);
+  if (!result.success) throw new Error(`AI response failed validation: ${result.error.issues[0]?.message || "invalid structure"}`);
+  return result.data;
+}
+function requestText(value: unknown, max: number, fallback = "") {
+  const text = typeof value === "string" ? value.trim() : fallback;
+  return text.slice(0, max);
+}
+function normalizedTitle(value: string) { return value.toLocaleLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); }
+function parseRequest<T>(schema: z.ZodType<T>, body: unknown): T {
+  const result = schema.safeParse(body);
+  if (!result.success) { const error = new Error(result.error.issues[0]?.message || "Invalid request."); (error as any).statusCode = 400; throw error; }
+  return result.data;
+}
+function requireAiClient() {
+  const ai = getGeminiClient();
+  if (!ai) { const error = new Error("AI service is not configured."); (error as any).statusCode = 503; throw error; }
+  return ai;
+}
+const learnerContextSchema = z.object({ completedLessons: z.number().int().min(0).max(10000), totalXp: z.number().int().min(0).max(10000000), fluencyScore: z.number().min(0).max(100), weakAreas: z.array(nonEmptyText(120)).max(10) }).strict();
+const roadmapRequestSchema = z.object({ nativeLanguage: nativeLanguageSchema, level: cefrSchema, goal: nonEmptyText(160), dailyMinutes: z.number().int().min(5).max(240), learningStyle: nonEmptyText(80), learnerContext: learnerContextSchema.optional() }).strict();
+const teacherRequestSchema = z.object({ teacherId: nonEmptyText(80).optional(), teacherName: nonEmptyText(120).optional(), persona: nonEmptyText(500).optional(), userMessage: nonEmptyText(1200), history: z.array(z.object({ sender: z.enum(["user", "teacher"]), text: nonEmptyText(1200) }).strict()).max(30), cefrLevel: cefrSchema, goal: nonEmptyText(160) }).strict();
+const speechRequestSchema = z.object({ transcript: nonEmptyText(2000), targetPhrase: nonEmptyText(1000).optional(), cefrLevel: cefrSchema }).strict();
+const translationRequestSchema = z.object({ text: nonEmptyText(2000), nativeLanguage: nativeLanguageSchema }).strict();
+const customLessonRequestSchema = z.object({ topic: nonEmptyText(240), cefrLevel: cefrSchema, userGoal: nonEmptyText(200), learnerContext: learnerContextSchema.optional() }).strict();
+const saveCustomLessonRequestSchema = customLessonSchema.extend({ unitId: z.string().uuid() });
 
 app.use("/api/gemini", async (req, res, next) => {
   const key = req.header("authorization") || req.ip || "anonymous";
@@ -162,7 +245,7 @@ app.post("/api/billing/webhook", async (req, res) => {
 const getGeminiClient = () => {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    console.warn("GEMINI_API_KEY is not set. Gemini API endpoints will run with fallback mock responses.");
+    console.warn("GEMINI_API_KEY is not set. AI endpoints will fail closed with HTTP 503.");
     return null;
   }
   return new GoogleGenAI({
@@ -183,32 +266,16 @@ app.get("/api/health", (req, res) => {
 // 1. Personalized Learning Roadmap Generation
 app.post("/api/gemini/onboarding-roadmap", async (req, res) => {
   try {
-    const { nativeLanguage, level, goal, dailyMinutes, learningStyle } = req.body;
-    const ai = getGeminiClient();
-
-    if (!ai) {
-      return res.json({
-        curriculumName: `${goal} Masterclass for ${nativeLanguage} Speaker`,
-        assignedCEFR: level || "B1",
-        weeklyFocus: ["Pronunciation & Accent", "Vocabulary Expansion", "Roleplay Scenarios"],
-        recommendedTeacher: "Emma (US Accent)",
-        dailyPlan: [
-          { day: "Day 1", topic: "Self Introductions & Professional Greeting", minutes: dailyMinutes || 15 },
-          { day: "Day 2", topic: "Key Idioms & Conversational Connectors", minutes: dailyMinutes || 15 },
-          { day: "Day 3", topic: "Live AI Avatar Roleplay Practice", minutes: dailyMinutes || 15 },
-          { day: "Day 4", topic: "Pronunciation & Phoneme Polish", minutes: dailyMinutes || 15 },
-          { day: "Day 5", topic: "Weekly CEFR Fluency Assessment", minutes: dailyMinutes || 15 }
-        ],
-        aiTip: "Focus on speaking out loud during every lesson to build muscle memory."
-      });
-    }
+    const { nativeLanguage, level, goal, dailyMinutes, learningStyle, learnerContext } = parseRequest(roadmapRequestSchema, req.body);
+    const ai = requireAiClient();
 
     const prompt = `Create a highly personalized English learning roadmap for an IOI Education Network student with the following profile:
 - Native Language: ${nativeLanguage || "Spanish"}
 - Current Self-Assessed Level: ${level || "B1"}
 - Primary Goal: ${goal || "Daily Conversation"}
 - Daily Time Commitment: ${dailyMinutes || 15} minutes/day
-- Preferred Learning Style: ${learningStyle || "Interactive Voice"}
+- Preferred Learning Style: ${learningStyle}
+- Progress and speaking context: ${JSON.stringify(learnerContext || { completedLessons: 0, totalXp: 0, fluencyScore: 0, weakAreas: [] })}
 
 Return JSON conforming strictly to the requested schema.`;
 
@@ -244,495 +311,149 @@ Return JSON conforming strictly to the requested schema.`;
       }
     });
 
-    const data = JSON.parse(response.text || "{}");
+    const data = parseValidatedJson(response, roadmapSchema);
     res.json(data);
   } catch (error: any) {
     console.error("Roadmap generation error:", error);
-    res.status(500).json({ error: "Failed to generate roadmap" });
+    res.status(Number(error?.statusCode) || 500).json({ error: error?.statusCode === 503 ? error.message : "Failed to generate roadmap" });
   }
 });
 
 // 2. AI Avatar Teacher Conversational Chat Endpoint
 app.post("/api/gemini/chat-teacher", async (req, res) => {
   try {
-    const { teacherId, teacherName, persona, userMessage, history, cefrLevel, goal } = req.body;
-    const ai = getGeminiClient();
-
-    if (!ai) {
-      return res.json({
-        reply: `Hello! I'm ${teacherName || "Emma"}. That's a great observation! In English, we often say '${userMessage}' with a natural rhythm. How are you feeling about practicing today?`,
-        grammarCorrection: null,
-        betterPhrasing: `I would love to practice ${goal || "conversation"} with you today!`,
-        pronunciationFocus: ["rhythm", "intonation"],
-        followUpQuestion: "What did you do earlier today?"
-      });
-    }
-
-    const systemPrompt = `You are ${teacherName || "Emma"}, an AI Avatar English Teacher at IOI Education Network.
-Your Persona & Style: ${persona || "Warm, encouraging American teacher specializing in conversational fluency."}
-Current Student Level: CEFR ${cefrLevel || "B1"}.
-Student Goal: ${goal || "General Fluency"}.
-
-Instructions:
-1. Provide a warm, natural response as ${teacherName}.
-2. Keep your spoken reply concise (1-3 sentences) so it flows naturally in voice chat.
-3. Analyze the user's input. If there are minor grammar/vocabulary errors, provide a gentle "grammarCorrection" and a "betterPhrasing" (How to say it like a native).
-4. Highlight 1 or 2 words for "pronunciationFocus".
-5. Ask a natural "followUpQuestion" to keep the conversation going.
-
-Respond in JSON according to schema.`;
-
-    const contents = [
-      ...(history || []).map((h: any) => ({
-        role: h.sender === "user" ? "user" : "model",
-        parts: [{ text: h.text }]
-      })),
-      { role: "user", parts: [{ text: userMessage }] }
-    ];
-
-    const response = await generateTextContent(ai, {
-      model: GEMINI_TEXT_MODEL,
-      contents: contents,
-      config: {
-        systemInstruction: systemPrompt,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            reply: { type: Type.STRING },
-            grammarCorrection: { type: Type.STRING, nullable: true },
-            betterPhrasing: { type: Type.STRING },
-            pronunciationFocus: { type: Type.ARRAY, items: { type: Type.STRING } },
-            followUpQuestion: { type: Type.STRING }
-          },
-          required: ["reply", "betterPhrasing", "pronunciationFocus", "followUpQuestion"]
-        }
-      }
-    });
-
-    const data = JSON.parse(response.text || "{}");
-    res.json(data);
+    const { teacherName, persona, userMessage, history, cefrLevel, goal } = parseRequest(teacherRequestSchema, req.body);
+    const ai = requireAiClient();
+    const response = await generateTextContent(ai, { model: GEMINI_TEXT_MODEL, contents: [
+      ...(history || []).map((h) => ({ role: h.sender === "user" ? "user" : "model", parts: [{ text: h.text }] })),
+      { role: "user", parts: [{ text: userMessage }] },
+    ], config: { systemInstruction: `You are ${teacherName || "an encouraging English teacher"}. Persona: ${persona || "warm and precise"}. Student CEFR: ${cefrLevel}. Goal: ${goal}. Reply in concise JSON.`, responseMimeType: "application/json", responseSchema: { type: Type.OBJECT, properties: { reply: { type: Type.STRING }, grammarCorrection: { type: Type.STRING, nullable: true }, betterPhrasing: { type: Type.STRING }, pronunciationFocus: { type: Type.ARRAY, items: { type: Type.STRING } }, followUpQuestion: { type: Type.STRING } }, required: ["reply", "betterPhrasing", "pronunciationFocus", "followUpQuestion"] } } });
+    res.json(parseValidatedJson(response, teacherResponseSchema));
   } catch (error: any) {
     console.error("Teacher chat error:", error);
-    res.status(500).json({ error: "Failed to communicate with AI teacher" });
+    res.status(Number(error?.statusCode) || 500).json({ error: error?.statusCode === 503 ? error.message : error?.statusCode === 400 ? error.message : "Failed to communicate with AI teacher" });
   }
 });
 
 // 3. Speech & Pronunciation Assessment
 app.post("/api/gemini/assess-speech", async (req, res) => {
   try {
-    const { transcript, targetPhrase, cefrLevel } = req.body;
-    const ai = getGeminiClient();
-
-    if (!ai) {
-      return res.json({
-        accuracyScore: 88,
-        fluencyScore: 85,
-        pronunciationScore: 90,
-        overallCEFR: cefrLevel || "B1",
-        feedbackText: "Great effort! Your rhythm was very clear.",
-        wordFeedback: (transcript || targetPhrase || "Hello world").split(" ").map((word: string) => ({
-          word,
-          accuracy: Math.floor(Math.random() * 15) + 85,
-          status: "good"
-        })),
-        nativeAlternative: targetPhrase || transcript
-      });
-    }
-
-    const prompt = `Evaluate the spoken English performance of an IOI Education Network learner.
-User Spoke: "${transcript}"
-Target or Context Phrase: "${targetPhrase || transcript}"
-Current Level: ${cefrLevel || "B1"}
-
-Provide a comprehensive speech assessment JSON including scores (0-100), word-level feedback, and native alternative.`;
-
-    const response = await generateTextContent(ai, {
-      model: GEMINI_TEXT_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: "You are the Chief Pronunciation & Speech Evaluator at IOI Education Network. Be encouraging yet precise in scoring phonemes, fluency, and expression.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            accuracyScore: { type: Type.NUMBER },
-            fluencyScore: { type: Type.NUMBER },
-            pronunciationScore: { type: Type.NUMBER },
-            overallCEFR: { type: Type.STRING },
-            feedbackText: { type: Type.STRING },
-            wordFeedback: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  word: { type: Type.STRING },
-                  accuracy: { type: Type.NUMBER },
-                  status: { type: Type.STRING, description: "excellent | good | needs_practice" }
-                },
-                required: ["word", "accuracy", "status"]
-              }
-            },
-            nativeAlternative: { type: Type.STRING }
-          },
-          required: ["accuracyScore", "fluencyScore", "pronunciationScore", "overallCEFR", "feedbackText", "wordFeedback", "nativeAlternative"]
-        }
-      }
-    });
-
-    const data = JSON.parse(response.text || "{}");
-    res.json(data);
+    const { transcript, targetPhrase, cefrLevel } = parseRequest(speechRequestSchema, req.body);
+    const ai = requireAiClient();
+    const prompt = `Evaluate only this captured learner transcript: "${transcript}". Target phrase or context: "${targetPhrase || "free response"}". Current CEFR: ${cefrLevel}. Return scores from 0 to 100, a CEFR estimate, word feedback, concise grammar/pronunciation feedback, and a native alternative.`;
+    const response = await generateTextContent(ai, { model: GEMINI_TEXT_MODEL, contents: prompt, config: { systemInstruction: "You are a precise English speech evaluator. Never invent audio evidence; assess only the supplied transcript.", responseMimeType: "application/json", responseSchema: { type: Type.OBJECT, properties: { accuracyScore: { type: Type.NUMBER }, fluencyScore: { type: Type.NUMBER }, pronunciationScore: { type: Type.NUMBER }, overallCEFR: { type: Type.STRING }, feedbackText: { type: Type.STRING }, wordFeedback: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { word: { type: Type.STRING }, accuracy: { type: Type.NUMBER }, status: { type: Type.STRING } }, required: ["word", "accuracy", "status"] } }, nativeAlternative: { type: Type.STRING } }, required: ["accuracyScore", "fluencyScore", "pronunciationScore", "overallCEFR", "feedbackText", "wordFeedback", "nativeAlternative"] } } });
+    res.json(parseValidatedJson(response, speechAssessmentSchema));
   } catch (error: any) {
     console.error("Speech assessment error:", error);
-    res.status(500).json({ error: "Failed to assess speech" });
+    res.status(Number(error?.statusCode) || 500).json({ error: error?.statusCode === 503 ? error.message : error?.statusCode === 400 ? error.message : "Failed to assess speech" });
   }
 });
 
 // 4. Server-Side TTS Speech Synthesis
 app.post("/api/gemini/generate-tts", async (req, res) => {
   try {
-    const { text, voiceName } = req.body;
-    const ai = getGeminiClient();
-
-    if (!ai) {
-      return res.json({ audioBase64: null, message: "Use Web Speech API fallback" });
-    }
-
-    // Voice mapping: Kore, Fenrir, Zephyr, Charon, Puck
-    const voice = voiceName || "Kore";
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.1-flash-tts-preview",
-      contents: [{ parts: [{ text: text || "Welcome to IOI Education Network." }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: voice }
-          }
-        }
-      }
-    });
-
-    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (base64Audio) {
-      res.json({ audioBase64: base64Audio });
-    } else {
-      res.json({ audioBase64: null, message: "No audio generated" });
-    }
+    const text = requestText(req.body?.text, 2000);
+    if (!text) return res.status(400).json({ error: "Text is required for speech synthesis." });
+    const ai = requireAiClient();
+    const voice = requestText(req.body?.voiceName, 40, "Kore");
+    const response = await ai.models.generateContent({ model: "gemini-3.1-flash-tts-preview", contents: [{ parts: [{ text }] }], config: { responseModalities: [Modality.AUDIO], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } } });
+    const audioBase64 = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    if (!audioBase64) return res.status(502).json({ error: "No audio was returned by the speech service." });
+    res.json({ audioBase64 });
   } catch (error: any) {
-    console.warn("TTS generation error:", error?.message || error);
-    res.json({ audioBase64: null, fallbackWebSpeech: true });
+    console.error("TTS generation error:", error);
+    res.status(Number(error?.statusCode) || 500).json({ error: error?.statusCode === 503 ? error.message : "Speech synthesis is unavailable." });
   }
 });
 
 // 5. Essay & Writing Evaluation
 app.post("/api/gemini/assess-essay", async (req, res) => {
   try {
-    const { essayText, promptTopic, targetCEFR } = req.body;
-    const ai = getGeminiClient();
-
-    if (!ai) {
-      return res.json({
-        cefrGrade: targetCEFR || "B2",
-        overallScore: 82,
-        grammarScore: 80,
-        vocabularyScore: 85,
-        coherenceScore: 81,
-        corrections: [
-          { original: "I am agree with this point", suggestion: "I agree with this point", explanation: "'Agree' is a verb, so you don't need 'am'." }
-        ],
-        advancedVocabularySuggestions: [
-          { basic: "very good", advanced: "exceptional / noteworthy" },
-          { basic: "big problem", advanced: "significant impediment" }
-        ],
-        summaryFeedback: "Solid essay structure with good paragraph flow! Focus on subject-verb agreement for C1 level."
-      });
-    }
-
-    const prompt = `Grade this English essay for an IOI Education Network student:
-Topic: "${promptTopic || "General Topic"}"
-Essay Text: "${essayText}"
-Target CEFR: ${targetCEFR || "B2"}
-
-Evaluate grammar, vocabulary level, sentence structure, coherence, and suggest higher-level vocabulary replacements.`;
-
-    const response = await generateTextContent(ai, {
-      model: GEMINI_TEXT_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: "You are the Senior English Writing Examiner at IOI Education Network. Provide detailed, helpful essay feedback.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            cefrGrade: { type: Type.STRING },
-            overallScore: { type: Type.NUMBER },
-            grammarScore: { type: Type.NUMBER },
-            vocabularyScore: { type: Type.NUMBER },
-            coherenceScore: { type: Type.NUMBER },
-            corrections: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  original: { type: Type.STRING },
-                  suggestion: { type: Type.STRING },
-                  explanation: { type: Type.STRING }
-                },
-                required: ["original", "suggestion", "explanation"]
-              }
-            },
-            advancedVocabularySuggestions: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  basic: { type: Type.STRING },
-                  advanced: { type: Type.STRING }
-                },
-                required: ["basic", "advanced"]
-              }
-            },
-            summaryFeedback: { type: Type.STRING }
-          },
-          required: ["cefrGrade", "overallScore", "grammarScore", "vocabularyScore", "coherenceScore", "corrections", "advancedVocabularySuggestions", "summaryFeedback"]
-        }
-      }
-    });
-
-    const data = JSON.parse(response.text || "{}");
-    res.json(data);
+    const essayText = requestText(req.body?.essayText, 12000);
+    const promptTopic = requestText(req.body?.promptTopic, 500, "General topic");
+    const targetCEFR = cefrSchema.safeParse(req.body?.targetCEFR).success ? req.body.targetCEFR : "B2";
+    if (!essayText) return res.status(400).json({ error: "Essay text is required." });
+    const ai = requireAiClient();
+    const response = await generateTextContent(ai, { model: GEMINI_TEXT_MODEL, contents: `Grade this English essay. Topic: ${promptTopic}. Target CEFR: ${targetCEFR}. Essay: ${essayText}`, config: { responseMimeType: "application/json", responseSchema: { type: Type.OBJECT, properties: { cefrGrade: { type: Type.STRING }, overallScore: { type: Type.NUMBER }, grammarScore: { type: Type.NUMBER }, vocabularyScore: { type: Type.NUMBER }, coherenceScore: { type: Type.NUMBER }, corrections: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { original: { type: Type.STRING }, suggestion: { type: Type.STRING }, explanation: { type: Type.STRING } }, required: ["original", "suggestion", "explanation"] } }, advancedVocabularySuggestions: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { basic: { type: Type.STRING }, advanced: { type: Type.STRING } }, required: ["basic", "advanced"] } }, summaryFeedback: { type: Type.STRING } }, required: ["cefrGrade", "overallScore", "grammarScore", "vocabularyScore", "coherenceScore", "corrections", "advancedVocabularySuggestions", "summaryFeedback"] } } });
+    res.json(JSON.parse(response.text || "{}"));
   } catch (error: any) {
     console.error("Essay assessment error:", error);
-    res.status(500).json({ error: "Failed to assess essay" });
+    res.status(Number(error?.statusCode) || 500).json({ error: error?.statusCode === 503 ? error.message : "Failed to assess essay" });
   }
 });
 
 // 6. Native Language Translation & Explanation Tool
 app.post("/api/gemini/translate-explain", async (req, res) => {
   try {
-    const { text, nativeLanguage } = req.body;
-    const ai = getGeminiClient();
-
-    if (!ai) {
-      return res.json({
-        translatedText: `[Translated to ${nativeLanguage || "Native Language"}]: ${text}`,
-        literalMeaning: text,
-        culturalNote: "This phrase is widely used in casual conversations across native English speaking countries.",
-        keyVocabulary: [
-          { word: text.split(" ")[0] || "hello", definition: "A standard greeting", example: text }
-        ]
-      });
-    }
-
-    const prompt = `Translate and explain the following English phrase for a learner whose native language is ${nativeLanguage || "Spanish"}:
-English Text: "${text}"`;
-
-    const response = await generateTextContent(ai, {
-      model: GEMINI_TEXT_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: `You are the Multilingual AI Translator for IOI Education Network. Translate accurately into ${nativeLanguage || "the user's native language"} and break down key phrases and cultural nuances.`,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            translatedText: { type: Type.STRING },
-            literalMeaning: { type: Type.STRING },
-            culturalNote: { type: Type.STRING },
-            keyVocabulary: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  word: { type: Type.STRING },
-                  definition: { type: Type.STRING },
-                  example: { type: Type.STRING }
-                },
-                required: ["word", "definition", "example"]
-              }
-            }
-          },
-          required: ["translatedText", "literalMeaning", "culturalNote", "keyVocabulary"]
-        }
-      }
-    });
-
-    const data = JSON.parse(response.text || "{}");
-    res.json(data);
+    const { text, nativeLanguage } = parseRequest(translationRequestSchema, req.body);
+    const ai = requireAiClient();
+    const response = await generateTextContent(ai, { model: GEMINI_TEXT_MODEL, contents: `Translate and explain this English phrase for a learner whose native language is ${nativeLanguage}. Preserve the English original and return assistance only: "${text}"`, config: { systemInstruction: `You are a precise multilingual English-learning assistant. Translate into ${nativeLanguage}; never replace or rewrite the original English lesson content.`, responseMimeType: "application/json", responseSchema: { type: Type.OBJECT, properties: { translatedText: { type: Type.STRING }, literalMeaning: { type: Type.STRING }, culturalNote: { type: Type.STRING }, keyVocabulary: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { word: { type: Type.STRING }, definition: { type: Type.STRING }, example: { type: Type.STRING } }, required: ["word", "definition", "example"] } } }, required: ["translatedText", "literalMeaning", "culturalNote", "keyVocabulary"] } } });
+    res.json(parseValidatedJson(response, translationResponseSchema));
   } catch (error: any) {
     console.error("Translation error:", error);
-    res.status(500).json({ error: "Failed to translate" });
+    res.status(Number(error?.statusCode) || 500).json({ error: error?.statusCode === 503 ? error.message : error?.statusCode === 400 ? error.message : "Failed to translate" });
   }
 });
 
 // 7. On-Demand Custom Scenario Generator (AI Content Studio)
 app.post("/api/gemini/generate-custom-lesson", async (req, res) => {
   try {
-    const { topic, cefrLevel, userGoal } = req.body;
-    const ai = getGeminiClient();
-
-    if (!ai) {
-      return res.json({
-        title: `Mastering ${topic || "English Roleplay"}`,
-        cefrLevel: cefrLevel || "B1",
-        description: `Interactive lesson and practical conversation practice for ${topic || "everyday situations"}.`,
-        dialogue: [
-          { speaker: "AI Teacher", text: `Hello! Welcome to our ${topic} practice session. Are you ready?`, translation: "Hola! Bienvenido..." },
-          { speaker: "Learner", text: "Yes, I am ready to practice!", translation: "Sí, estoy listo..." }
-        ],
-        vocabularyList: [
-          { term: "Confidence", phonetic: "/ˈkɒnfɪdəns/", definition: "Self-assurance in speaking" }
-        ],
-        speakingPrompts: [
-          `How would you express your opinion regarding ${topic}?`
-        ]
-      });
-    }
-
-    const prompt = `Generate a complete interactive English lesson unit for IOI Education Network:
-Topic: "${topic || "Ordering at a Fine Dining Restaurant"}"
-Target CEFR: "${cefrLevel || "B1"}"
-Learner Goal: "${userGoal || "Speaking Fluency"}"`;
-
-    const response = await generateTextContent(ai, {
-      model: GEMINI_TEXT_MODEL,
-      contents: prompt,
-      config: {
-        systemInstruction: "You are the AI Content Generator for IOI Education Network. Produce realistic, fun, practical roleplays and vocabulary for modern English learners.",
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            cefrLevel: { type: Type.STRING },
-            description: { type: Type.STRING },
-            dialogue: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  speaker: { type: Type.STRING },
-                  text: { type: Type.STRING },
-                  translation: { type: Type.STRING }
-                },
-                required: ["speaker", "text", "translation"]
-              }
-            },
-            vocabularyList: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  term: { type: Type.STRING },
-                  phonetic: { type: Type.STRING },
-                  definition: { type: Type.STRING }
-                },
-                required: ["term", "phonetic", "definition"]
-              }
-            },
-            speakingPrompts: { type: Type.ARRAY, items: { type: Type.STRING } }
-          },
-          required: ["title", "cefrLevel", "description", "dialogue", "vocabularyList", "speakingPrompts"]
-        }
-      }
-    });
-
-    const data = JSON.parse(response.text || "{}");
-    res.json(data);
+    const { topic, cefrLevel, userGoal, learnerContext } = parseRequest(customLessonRequestSchema, req.body);
+    const ai = requireAiClient();
+    const response = await generateTextContent(ai, { model: GEMINI_TEXT_MODEL, contents: `Generate a complete interactive English lesson unit. Topic: "${topic}". Target CEFR: ${cefrLevel}. Learner goal: "${userGoal}". Learner context: ${JSON.stringify(learnerContext || {})}. Address weak areas and speaking confidence in the speaking prompts. Include an English dialogue with optional assistance translations, a focused vocabulary list, and speaking prompts.`, config: { systemInstruction: "You are the IOI English curriculum generator. Return only practical, safe, structured lesson JSON.", responseMimeType: "application/json", responseSchema: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, cefrLevel: { type: Type.STRING }, description: { type: Type.STRING }, dialogue: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { speaker: { type: Type.STRING }, text: { type: Type.STRING }, translation: { type: Type.STRING } }, required: ["speaker", "text", "translation"] } }, vocabularyList: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { term: { type: Type.STRING }, phonetic: { type: Type.STRING }, definition: { type: Type.STRING } }, required: ["term", "phonetic", "definition"] } }, speakingPrompts: { type: Type.ARRAY, items: { type: Type.STRING } } }, required: ["title", "cefrLevel", "description", "dialogue", "vocabularyList", "speakingPrompts"] } } });
+    res.json(parseValidatedJson(response, customLessonSchema));
   } catch (error: any) {
     console.error("Custom lesson generation error:", error);
-    res.status(500).json({ error: "Failed to generate custom lesson" });
+    res.status(Number(error?.statusCode) || 500).json({ error: error?.statusCode === 503 ? error.message : error?.statusCode === 400 ? error.message : "Failed to generate custom lesson" });
+  }
+});
+
+app.post("/api/gemini/save-custom-lesson", async (req, res) => {
+  try {
+    const { unitId, title, cefrLevel, description, dialogue, vocabularyList, speakingPrompts } = parseRequest(saveCustomLessonRequestSchema, req.body);
+    if (!contentAdminClient) return res.status(503).json({ error: "AI lesson persistence is not configured for this deployment." });
+    const { data: unit, error: unitError } = await contentAdminClient.from("units").select("id,level_id").eq("id", unitId).maybeSingle();
+    if (unitError || !unit) return res.status(404).json({ error: "Choose an existing course unit before saving this lesson." });
+    const { data: level, error: levelError } = await contentAdminClient.from("levels").select("id,course_id").eq("id", unit.level_id).maybeSingle();
+    if (levelError || !level) return res.status(404).json({ error: "The selected course unit is unavailable." });
+    const { data: existingLessons, error: existingError } = await contentAdminClient.from("lessons").select("id,title").eq("unit_id", unitId).limit(200);
+    if (existingError) throw existingError;
+    const normalized = normalizedTitle(title);
+    if ((existingLessons || []).some((lesson: any) => normalizedTitle(String(lesson.title || "")) === normalized)) return res.status(409).json({ error: "A lesson with this title already exists in the selected unit." });
+    const { data: lastLesson } = await contentAdminClient.from("lessons").select("order_number").eq("unit_id", unitId).order("order_number", { ascending: false }).limit(1).maybeSingle();
+    const orderNumber = Number(lastLesson?.order_number || 0) + 1;
+    const lessonInsert = await contentAdminClient.from("lessons").insert({ unit_id: unitId, title, lesson_type: "Roleplay", content: { source: "authenticated-ai", cefrLevel, learningObjective: description, xpReward: 100, estimatedMinutes: 15, userId: res.locals.userId }, video_url: null, audio_url: null, ai_prompt: `Generated for ${cefrLevel} learner goal: ${description}`, order_number: orderNumber }).select("id,title,unit_id").single();
+    if (lessonInsert.error || !lessonInsert.data) throw lessonInsert.error || new Error("Lesson could not be created.");
+    const lessonId = lessonInsert.data.id;
+    const cleanup = async () => { await contentAdminClient.from("lessons").delete().eq("id", lessonId); };
+    const vocabularyInsert = await contentAdminClient.from("vocabulary").insert(vocabularyList.map((item) => ({ lesson_id: lessonId, word: item.term, pronunciation: item.phonetic, meaning: item.definition, example_sentence: `Use ${item.term} naturally when discussing this situation.` })));
+    if (vocabularyInsert.error) { await cleanup(); throw vocabularyInsert.error; }
+    const dialogueInsert = await contentAdminClient.from("dialogues").insert(dialogue.map((line, index) => ({ lesson_id: lessonId, speaker: line.speaker, text: line.text, order_number: index + 1 })));
+    if (dialogueInsert.error) { await cleanup(); throw dialogueInsert.error; }
+    const grammarInsert = await contentAdminClient.from("grammar_topics").insert({ lesson_id: lessonId, topic: `Useful grammar for ${title}`, explanation: description, examples: dialogue.map((line) => line.text).slice(0, 2).join(" ") });
+    if (grammarInsert.error) { await cleanup(); throw grammarInsert.error; }
+    const quizInsert = await contentAdminClient.from("quizzes").insert({ lesson_id: lessonId, question: `What is the main speaking context in ${title}?`, option_a: title, option_b: "A silent reading drill", option_c: "A spelling-only test", option_d: "No practice context", correct_answer: title, order_number: 1 });
+    if (quizInsert.error) { await cleanup(); throw quizInsert.error; }
+    const speakingInsert = await contentAdminClient.from("speaking_practice").insert({ lesson_id: lessonId, scenario: title, ai_instruction: speakingPrompts.join(" "), difficulty_level: cefrLevel });
+    if (speakingInsert.error) { await cleanup(); throw speakingInsert.error; }
+    return res.status(201).json({ lessonId, title, unitId, persisted: true });
+  } catch (error: any) {
+    console.error("Custom lesson persistence error:", error);
+    return res.status(Number(error?.statusCode) || 500).json({ error: error?.statusCode === 503 ? error.message : "The custom lesson could not be saved safely." });
   }
 });
 
 // 8. Automated Master Curriculum Engine - Generate Complete 13-Part Lesson Unit
 app.post("/api/gemini/generate-full-lesson", async (req, res) => {
   try {
-    const { level, unitNumber, moduleNumber, topicTitle, userNativeLang } = req.body;
-    const ai = getGeminiClient();
+    const { level, unitNumber, moduleNumber, topicTitle, userNativeLang } = parseRequest(fullLessonRequestSchema, req.body);
+    const ai = requireAiClient();
 
     const targetLevel = level || "B1";
-    const unitNo = unitNumber || 1;
-    const modNo = moduleNumber || 1;
-    const topic = topicTitle || "Executive Communications";
-    const nativeLang = userNativeLang || "Spanish";
-
-    if (!ai) {
-      return res.json({
-        id: `full_lesson_${targetLevel}_u${unitNo}_m${modNo}`,
-        level: targetLevel,
-        unitNumber: unitNo,
-        moduleNumber: modNo,
-        title: `${topic} (Module ${modNo})`,
-        subtitle: `Level ${targetLevel} Master Unit`,
-        category: "Roleplay",
-        estimatedMinutes: 15,
-        xpReward: 100,
-        learningObjective: `Master core sentence structures, vocabulary, and natural conversational cadence for ${topic} at CEFR level ${targetLevel}.`,
-        grammarExplanation: {
-          summary: `In ${topic}, native speakers utilize precise sentence markers and indirect phrasing.`,
-          rules: [
-            { ruleTitle: "Courtesy Expressions", explanation: "Use 'Would you mind...' or 'Could I please...' for polite requests.", example: "Could I please clarify this timeline?" }
-          ],
-          commonMistakes: [
-            { incorrect: "I am agree with your proposal", correct: "I agree with your proposal", reason: "'Agree' is a verb in English." }
-          ]
-        },
-        vocabularyList: [
-          { term: "Elaborate", phonetic: "/ɪˈlæb.ə.reɪt/", partOfSpeech: "verb", definition: "To present an idea in detail.", example: "Could you elaborate on that?", nativeTranslation: "Elaborar / Detallar" }
-        ],
-        exampleSentences: [
-          { english: "I would appreciate your thoughts on this matter.", nativeTranslation: "Agradecería sus comentarios sobre este asunto.", contextNote: "Polite formal phrasing." }
-        ],
-        listeningScript: {
-          title: "Executive Discussion",
-          audioText: "Listen to two colleagues discussing project goals.",
-          speakers: [
-            { speaker: "Manager", text: "Welcome to today's review session.", translation: "Bienvenido a la sesión de revisión de hoy." }
-          ],
-          comprehensionCheck: [
-            { question: "What is the primary topic?", options: ["Project review", "Office relocation"], correctIndex: 0, explanation: "Manager mentions review session." }
-          ]
-        },
-        speakingPractice: {
-          targetPhrases: [
-            { phrase: "I'd like to elaborate on that point.", phonetic: "/aɪd laɪk tuː ɪˈlæb.ə.reɪt ɒn ðæt pɔɪnt/", translation: "Me gustaría profundizar...", pronunciationTip: "Connect words smoothly." }
-          ],
-          phonemeFocus: ["/æ/", "/eɪ/"]
-        },
-        aiConversationScenario: {
-          scenarioTitle: `Roleplay: ${topic}`,
-          roleplayRole: "Senior Specialist",
-          teacherRole: "AI Director",
-          initialMessage: `Welcome! Let's begin our discussion on ${topic}.`,
-          suggestedResponses: ["Thank you. I am ready."],
-          contextGoal: "Practice natural fluency and accurate vocabulary."
-        },
-        pronunciationPractice: {
-          stressPatterns: [{ word: "ELABORATE", stressedSyllable: "e-LAB-o-rate", phonetic: "/ɪˈlæb.ə.reɪt/" }],
-          minimalPairs: [{ wordA: "ship", wordB: "sheep", difference: "Short vs long vowel" }],
-          intonationType: "Falling intonation for standard statements."
-        },
-        exercises: [
-          { id: "ex1", type: "multiple_choice", prompt: "Choose the correct phrase:", options: ["I agree", "I am agree"], correctAnswer: "I agree", hint: "Verb form." }
-        ],
-        quiz: [
-          { id: "q1", question: "What does elaborate mean?", options: ["To detail", "To delete"], correctIndex: 0, explanation: "Elaborate means to detail." }
-        ],
-        homework: {
-          assignmentTitle: "Reflective Summary",
-          instructions: "Write a 3-sentence summary of what you practiced."
-        },
-        aiEvaluationCriteria: {
-          targetGrammarMastery: 85,
-          targetVocabularyDiversity: 80,
-          accuracyThresholdPercent: 85,
-          keyFeedbackFocusPoints: ["Sentence clarity", "Syllable stress"]
-        }
-      });
-    }
+    const unitNo = unitNumber;
+    const modNo = moduleNumber;
+    const topic = topicTitle;
+    const nativeLang = userNativeLang;
 
     const prompt = `Generate a complete 13-part structured lesson for IOI Education Network:
 - CEFR Level: ${targetLevel}
@@ -988,11 +709,11 @@ Required 13-part lesson schema in JSON:
       }
     });
 
-    const data = JSON.parse(response.text || "{}");
+    const data = parseValidatedJson(response, fullLessonResponseSchema);
     res.json(data);
   } catch (error: any) {
     console.error("Full lesson generation error:", error);
-    res.status(500).json({ error: "Failed to generate full lesson" });
+    res.status(Number(error?.statusCode) || 500).json({ error: error?.statusCode === 503 ? error.message : error?.statusCode === 400 ? error.message : "Failed to generate full lesson" });
   }
 });
 

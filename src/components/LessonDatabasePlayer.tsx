@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AudioLines, BookOpen, Brain, CheckCircle2, ChevronLeft, ChevronRight, CircleAlert, Clock3, Headphones, HelpCircle, Loader2, MessageSquare, Mic, Play, RotateCcw, Sparkles, Star, Subtitles, Trophy, Video, Volume2, X } from "lucide-react";
 import { db, isSupabaseConfigured, loadFullLesson } from "../lib/supabase";
 import { getDemoLessonBundle } from "../data/curriculumCatalog";
 import { useAuth } from "../lib/AuthContext";
 import { apiFetch } from "../lib/api";
+import { describeSpeechRecognitionError, getSpeechRecognitionConstructor, normalizeTranscript } from "../lib/speechRecognition";
 
 interface LessonDatabasePlayerProps {
   lessonId: string;
@@ -37,6 +38,11 @@ export const LessonDatabasePlayer: React.FC<LessonDatabasePlayerProps> = ({ less
   const [countdown, setCountdown] = useState<number | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [speechResult, setSpeechResult] = useState<{ score: number; feedback: string } | null>(null);
+  const [speechTranscript, setSpeechTranscript] = useState("");
+  const [speechError, setSpeechError] = useState<string | null>(null);
+  const [isAssessingSpeech, setIsAssessingSpeech] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  const transcriptRef = useRef("");
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [quizIndex, setQuizIndex] = useState(0);
   const [quizScore, setQuizScore] = useState(0);
@@ -63,7 +69,7 @@ export const LessonDatabasePlayer: React.FC<LessonDatabasePlayerProps> = ({ less
     return () => { active = false; };
   }, [lessonId]);
 
-  useEffect(() => () => { window.speechSynthesis?.cancel(); }, []);
+  useEffect(() => () => { window.speechSynthesis?.cancel(); recognitionRef.current?.abort?.(); }, []);
 
   const quizzes = data?.quizzes ?? [];
   const currentQuiz = quizzes[quizIndex];
@@ -83,15 +89,55 @@ export const LessonDatabasePlayer: React.FC<LessonDatabasePlayerProps> = ({ less
     window.speechSynthesis.speak(utterance);
   };
 
+  const assessSpeaking = async (capturedTranscript: string) => {
+    const transcript = normalizeTranscript(capturedTranscript);
+    if (!transcript) { setSpeechError("No transcript was captured. Speak clearly after starting the microphone and try again."); return; }
+    setIsAssessingSpeech(true);
+    setSpeechError(null);
+    try {
+      const response = await apiFetch("/api/gemini/assess-speech", { method: "POST", body: JSON.stringify({ transcript, targetPhrase: currentSpeakingPhrase, cefrLevel: data?.lesson?.content?.cefrLevel || "B1" }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || "Speech assessment is unavailable.");
+      const scores = [Number(result.accuracyScore), Number(result.fluencyScore), Number(result.pronunciationScore)];
+      if (scores.some((score) => !Number.isFinite(score))) throw new Error("The assessment response was incomplete. Please try again.");
+      const score = Math.max(0, Math.min(100, Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length)));
+      setSpeechResult({ score, feedback: result.feedbackText });
+      if (user && isSupabaseConfigured && !lessonId.startsWith("demo-")) await db.upsertProgress(user.id, lessonId, { completion_status: "in_progress", speaking_score: score });
+    } catch (assessmentError) {
+      console.error("Lesson speech assessment error:", assessmentError);
+      setSpeechResult(null);
+      setSpeechError(assessmentError instanceof Error ? assessmentError.message : "Speech assessment is unavailable. Please try again.");
+    } finally { setIsAssessingSpeech(false); }
+  };
+
   const startSpeakingPractice = () => {
+    const SpeechRec = getSpeechRecognitionConstructor();
+    if (!SpeechRec) { setSpeechError("Speech recognition is not supported in this browser. This lesson requires a captured transcript for scoring."); return; }
     setCountdown(3);
     setSpeechResult(null);
+    setSpeechTranscript("");
+    setSpeechError(null);
+    transcriptRef.current = "";
     const timer = window.setInterval(() => {
       setCountdown((current) => {
         if (current === null || current <= 1) {
           window.clearInterval(timer);
-          setIsRecording(true);
-          window.setTimeout(() => setIsRecording(false), 5000);
+          const recognition = new SpeechRec();
+          recognition.continuous = false;
+          recognition.interimResults = true;
+          recognition.lang = "en-US";
+          recognition.onresult = (event: any) => {
+            let transcript = "";
+            for (let i = event.resultIndex; i < event.results.length; i += 1) transcript += `${event.results[i][0].transcript} `;
+            const normalized = normalizeTranscript(transcript);
+            transcriptRef.current = normalized;
+            setSpeechTranscript(normalized);
+            if (event.results[event.results.length - 1]?.isFinal && normalized) void assessSpeaking(normalized);
+          };
+          recognition.onerror = (event: any) => { setIsRecording(false); setSpeechError(describeSpeechRecognitionError(event).message); };
+          recognition.onend = () => { setIsRecording(false); if (!transcriptRef.current && !isAssessingSpeech) setSpeechError("No transcript was captured. Speak clearly after starting the microphone and try again."); };
+          recognitionRef.current = recognition;
+          try { recognition.start(); setIsRecording(true); } catch { setSpeechError("The microphone could not start. Check browser permission settings and try again."); }
           return null;
         }
         return current - 1;
@@ -99,25 +145,9 @@ export const LessonDatabasePlayer: React.FC<LessonDatabasePlayerProps> = ({ less
     }, 1000);
   };
 
-  const assessSpeaking = async () => {
+  const stopSpeakingPractice = () => {
+    recognitionRef.current?.stop?.();
     setIsRecording(false);
-    const fallbackScore = 86;
-    try {
-      const response = await apiFetch("/api/gemini/assess-speech", { method: "POST", body: JSON.stringify({ transcript: currentSpeakingPhrase, targetPhrase: currentSpeakingPhrase, cefrLevel: "B1" }) });
-      if (!response.ok) throw new Error("assessment failed");
-      const result = await response.json();
-      const score = Math.max(0, Math.min(100, Math.round((Number(result.accuracyScore) + Number(result.fluencyScore) + Number(result.pronunciationScore)) / 3)));
-      setSpeechResult({ score, feedback: result.feedbackText || "Good work. Repeat once more while keeping the final word strong." });
-      if (user && isSupabaseConfigured && !lessonId.startsWith("demo-")) {
-        await db.upsertProgress(user.id, lessonId, { completion_status: "in_progress", speaking_score: score });
-      }
-      return;
-    } catch {
-      setSpeechResult({ score: fallbackScore, feedback: "Good rhythm and clear delivery. Repeat once more while keeping the final word strong." });
-    }
-    if (user && isSupabaseConfigured && !lessonId.startsWith("demo-")) {
-      await db.upsertProgress(user.id, lessonId, { completion_status: "in_progress", speaking_score: fallbackScore });
-    }
   };
 
   const handleQuizSubmit = async () => {
@@ -180,7 +210,7 @@ export const LessonDatabasePlayer: React.FC<LessonDatabasePlayerProps> = ({ less
 
       {activeTab === "dialogue" && <section className="space-y-3"><SectionHeading icon={<MessageSquare className="h-4 w-4" />} title="Dialogue & shadowing" />{data.dialogues?.map((line: any) => <div key={line.id} className={`rounded-2xl border p-4 ${line.speaker === "Learner" ? "ml-8 border-indigo-500/30 bg-indigo-500/10" : "mr-8 border-slate-800 bg-slate-900/80"}`}><div className="flex items-center justify-between gap-3"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">{line.speaker}</p><button onClick={() => speakText(line.text)} className="text-slate-500 hover:text-cyan-300" aria-label="Play dialogue line"><Volume2 className="h-4 w-4" /></button></div><p className="mt-2 text-sm leading-relaxed text-white">{line.text}</p></div>)}<button onClick={() => setActiveTab("speaking")} className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white">Repeat & shadow <ChevronRight className="h-4 w-4" /></button></section>}
 
-      {activeTab === "speaking" && <section className="space-y-4"><SectionHeading icon={<Mic className="h-4 w-4" />} title="Controlled speaking practice" /><div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5"><p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-300">Speaking pause</p><p className="mt-3 text-xl font-black leading-relaxed text-white">“{currentSpeakingPhrase}”</p><p className="mt-3 text-xs text-slate-400">Take a breath, press start, and speak for five seconds. A browser microphone is optional; the assessment endpoint will provide feedback when available.</p><div className="mt-5 flex flex-wrap gap-2"><button onClick={() => speakText(currentSpeakingPhrase)} className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-200"><Volume2 className="h-4 w-4" />Hear model</button><button onClick={startSpeakingPractice} disabled={countdown !== null || isRecording} className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"><Mic className="h-4 w-4" />{isRecording ? "Listening…" : countdown !== null ? `Get ready ${countdown}` : "Start speaking"}</button>{isRecording && <button onClick={() => void assessSpeaking()} className="rounded-xl bg-cyan-600 px-4 py-2 text-xs font-bold text-white">Finish & assess</button>}</div>{speechResult && <div className="mt-5 rounded-xl border border-emerald-500/20 bg-slate-950/70 p-4"><div className="flex items-center justify-between"><span className="text-sm font-bold text-white">Speech score</span><span className="text-2xl font-black text-emerald-300">{speechResult.score}%</span></div><p className="mt-2 text-xs leading-relaxed text-slate-300">{speechResult.feedback}</p></div>}</div><div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Choose your own prompt</p><input value={speakingPhrase} onChange={(event) => setSpeakingPhrase(event.target.value)} className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400" placeholder="Type a sentence to practise" /></div><button onClick={onOpenTutor} className="flex w-full items-center justify-center gap-2 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-sm font-bold text-indigo-200 hover:bg-indigo-500/20"><Sparkles className="h-4 w-4" />Continue with AI Tutor</button></section>}
+      {activeTab === "speaking" && <section className="space-y-4"><SectionHeading icon={<Mic className="h-4 w-4" />} title="Controlled speaking practice" /><div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-5"><p className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-300">Speaking pause</p><p className="mt-3 text-xl font-black leading-relaxed text-white">“{currentSpeakingPhrase}”</p><p className="mt-3 text-xs text-slate-400">Take a breath, press start, and speak your own answer. The score is saved only after a real transcript is captured and the authenticated AI assessment succeeds.</p><div className="mt-5 flex flex-wrap gap-2"><button onClick={() => speakText(currentSpeakingPhrase)} className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-200"><Volume2 className="h-4 w-4" />Hear model</button><button onClick={isRecording ? stopSpeakingPractice : startSpeakingPractice} disabled={countdown !== null || isAssessingSpeech} className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white disabled:opacity-50"><Mic className="h-4 w-4" />{isRecording ? "Stop listening" : countdown !== null ? `Get ready ${countdown}` : "Start speaking"}</button></div>{speechTranscript && <p className="mt-4 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-left text-xs text-cyan-100"><strong>Captured transcript:</strong> {speechTranscript}</p>}{isAssessingSpeech && <p className="mt-4 text-xs text-cyan-200">AI is assessing your captured transcript…</p>}{speechError && <p className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-left text-xs text-amber-100" role="alert">{speechError}</p>}{speechResult && <div className="mt-5 rounded-xl border border-emerald-500/20 bg-slate-950/70 p-4"><div className="flex items-center justify-between"><span className="text-sm font-bold text-white">Speech score</span><span className="text-2xl font-black text-emerald-300">{speechResult.score}%</span></div><p className="mt-2 text-xs leading-relaxed text-slate-300">{speechResult.feedback}</p></div>}</div><div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-4"><p className="text-xs font-bold uppercase tracking-wider text-slate-500">Choose your own prompt</p><input value={speakingPhrase} onChange={(event) => setSpeakingPhrase(event.target.value)} className="mt-3 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm text-white outline-none focus:border-indigo-400" placeholder="Type a sentence to practise" /></div><button onClick={onOpenTutor} className="flex w-full items-center justify-center gap-2 rounded-xl border border-indigo-500/30 bg-indigo-500/10 px-4 py-3 text-sm font-bold text-indigo-200 hover:bg-indigo-500/20"><Sparkles className="h-4 w-4" />Continue with AI Tutor</button></section>}
 
       {activeTab === "quiz" && <section className="space-y-4">{showResults ? <div className="rounded-3xl border border-amber-500/20 bg-gradient-to-br from-amber-950/50 to-slate-900 p-8 text-center"><Trophy className="mx-auto h-14 w-14 text-amber-300" /><h2 className="mt-4 text-2xl font-black text-white">Checkpoint complete</h2><p className="mt-2 text-slate-300">You scored <strong className="text-white">{quizScore}/{quizzes.length}</strong> ({quizzes.length ? Math.round((quizScore / quizzes.length) * 100) : 0}%).</p><div className="mt-5 flex justify-center gap-3"><button onClick={resetQuiz} className="flex items-center gap-2 rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-bold text-slate-200"><RotateCcw className="h-4 w-4" />Retry</button><button onClick={onClose} className="rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 px-4 py-2.5 text-sm font-bold text-white">Continue learning</button></div></div> : currentQuiz ? <><div className="flex items-center justify-between"><SectionHeading icon={<HelpCircle className="h-4 w-4" />} title="Checkpoint quiz" /><span className="text-xs text-slate-500">{quizIndex + 1}/{quizzes.length}</span></div><div className="rounded-2xl border border-slate-800 bg-slate-900/80 p-5"><h3 className="text-lg font-black text-white">{currentQuiz.question}</h3><div className="mt-5 space-y-2">{[currentQuiz.option_a, currentQuiz.option_b, currentQuiz.option_c, currentQuiz.option_d].filter(Boolean).map((option: string, index: number) => { const selected = selectedOption === option; const correct = quizAnswered && option === currentQuiz.correct_answer; const wrong = quizAnswered && selected && !correct; return <button key={option} disabled={quizAnswered} onClick={() => setSelectedOption(option)} className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left text-sm transition ${correct ? "border-emerald-500 bg-emerald-500/10 text-emerald-200" : wrong ? "border-rose-500 bg-rose-500/10 text-rose-200" : selected ? "border-indigo-400 bg-indigo-500/10 text-white" : "border-slate-700 bg-slate-950/50 text-slate-300 hover:border-slate-500"}`}><span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-800 text-xs font-black">{correct ? <CheckCircle2 className="h-4 w-4" /> : String.fromCharCode(65 + index)}</span>{option}</button>; })}</div>{!quizAnswered ? <button onClick={() => void handleQuizSubmit()} disabled={!selectedOption} className="mt-5 w-full rounded-xl bg-indigo-600 py-3 text-sm font-bold text-white disabled:opacity-40">Submit answer</button> : <button onClick={handleNextQuiz} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-600 py-3 text-sm font-bold text-white">{quizIndex === quizzes.length - 1 ? "See results" : "Next question"}<ChevronRight className="h-4 w-4" /></button>}</div></> : <Empty text="This lesson has no checkpoint quiz yet." />}</section>}
     </main>

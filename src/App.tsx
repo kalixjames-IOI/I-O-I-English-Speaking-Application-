@@ -17,6 +17,7 @@ import { CurriculumDatabaseView } from "./components/CurriculumDatabaseView";
 import { LessonDatabasePlayer } from "./components/LessonDatabasePlayer";
 import { HomeDashboard } from "./components/HomeDashboard";
 import { CommunityView } from "./components/CommunityView";
+import { AiContentStudio } from "./components/AiContentStudio";
 import { Sparkles } from "lucide-react";
 
 type PersistedProfile = {
@@ -46,6 +47,7 @@ function AppContent() {
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [showSubscription, setShowSubscription] = useState(false);
   const [showCertificate, setShowCertificate] = useState(false);
+  const [showContentStudio, setShowContentStudio] = useState(false);
 
   React.useEffect(() => {
     if (!authUser) return;
@@ -113,7 +115,7 @@ function AppContent() {
   if (authLoading) return <div className="flex min-h-screen items-center justify-center bg-slate-950 text-center"><div><div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" /><p className="text-sm text-slate-400">Loading your IOI learning space…</p></div></div>;
 
   return <><MobileContainer activeTab={activeTab} setActiveTab={setActiveTab} userStreak={user.streakDays} userXp={user.totalXp} userPlan={user.plan} onOpenSubscription={() => setShowSubscription(true)} isAuthenticated={!!authUser} userEmail={authUser?.email} userName={user.name} onSignIn={() => setShowAuth(true)} onSignOut={signOut}><HeaderNav user={user} activeTab={activeTab} setActiveTab={setActiveTab} onOpenSubscription={() => setShowSubscription(true)} onOpenOnboarding={() => setShowOnboarding(true)} isAuthenticated={!!authUser} userEmail={authUser?.email} userName={user.name} onSignIn={() => setShowAuth(true)} onSignOut={signOut} />
-      {activeTab === "home" && <HomeDashboard user={user} onOpenCourse={openCourse} onOpenTutor={openTutor} onOpenTeachers={openTeachers} onOpenProfile={openProfile} />}
+      {activeTab === "home" && <HomeDashboard user={user} onOpenCourse={openCourse} onOpenTutor={openTutor} onOpenTeachers={openTeachers} onOpenProfile={openProfile} onOpenContentStudio={() => setShowContentStudio(true)} />}
       {activeTab === "course" && <CurriculumDatabaseView completedLessonIds={user.completedLessonIds} onSelectLesson={setActiveLessonId} />}
       {activeTab === "teachers" && <TeachersView selectedTeacher={selectedTeacher} onSelect={setSelectedTeacher} onStartChat={(teacher) => { setSelectedTeacher(teacher); openTutor(); }} />}
       {activeTab === "tutor" && <VoiceChatStudio teacher={selectedTeacher} user={user} onBack={openTeachers} />}
@@ -126,6 +128,7 @@ function AppContent() {
     {showOnboarding && <OnboardingFlow user={user} onComplete={handleUpdateUser} onClose={() => setShowOnboarding(false)} />}
     {showSubscription && <SubscriptionModal currentPlan={user.plan} isAuthenticated={!!authUser} onSignIn={() => setShowAuth(true)} onClose={() => setShowSubscription(false)} />}
     {showCertificate && <CertificateModal user={user} onClose={() => setShowCertificate(false)} />}
+    {showContentStudio && <div className="fixed inset-0 z-40 overflow-y-auto bg-slate-950/95"><div className="mx-auto max-w-3xl"><div className="flex justify-end px-4 pt-4"><button onClick={() => setShowContentStudio(false)} className="rounded-xl border border-slate-700 bg-slate-900 px-3 py-2 text-xs font-bold text-slate-200">Close</button></div><AiContentStudio user={user} /></div></div>}
     {activeLessonId && <LessonDatabasePlayer lessonId={activeLessonId} onClose={() => setActiveLessonId(null)} onComplete={handleCompleteLesson} onOpenTutor={openTutor} />}
   </>;
 }

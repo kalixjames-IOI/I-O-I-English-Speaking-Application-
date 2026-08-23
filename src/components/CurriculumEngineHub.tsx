@@ -39,8 +39,7 @@ import {
 } from "../types";
 import {
   CEFR_LEVEL_METADATA,
-  MASTER_CURRICULUM_MODULES,
-  buildFullStructuredLesson
+  MASTER_CURRICULUM_MODULES
 } from "../data/curriculumMatrix";
 import {
   SAMPLE_VOCAB_DATABASE,
@@ -97,6 +96,7 @@ export const CurriculumEngineHub: React.FC<CurriculumEngineHubProps> = ({
   const [customTopic, setCustomTopic] = useState<string>("Cross-Cultural Leadership & Negotiation");
   const [customLevel, setCustomLevel] = useState<CEFRLevel>("B2");
   const [generatedSuccessMsg, setGeneratedSuccessMsg] = useState<string | null>(null);
+  const [generationError, setGenerationError] = useState<string | null>(null);
 
   // TTS audio playback helper using standard Web Speech API fallback
   const handlePlayTTS = (text: string) => {
@@ -113,6 +113,7 @@ export const CurriculumEngineHub: React.FC<CurriculumEngineHubProps> = ({
   const handleLaunchLesson = async (lvl: CEFRLevel, uNum: number, mNum: number, topicTitle: string) => {
     setIsGeneratingLesson(true);
     setCurrentStepIndex(0);
+    setGenerationError(null);
 
     try {
       const resp = await apiFetch("/api/gemini/generate-full-lesson", {
@@ -127,16 +128,12 @@ export const CurriculumEngineHub: React.FC<CurriculumEngineHubProps> = ({
         })
       });
 
-      if (resp.ok) {
-        const fullData: FullCurriculumLesson = await resp.json();
-        setActiveLessonModal(fullData);
-      } else {
-        const fallback = buildFullStructuredLesson(lvl, uNum, mNum);
-        setActiveLessonModal(fallback);
-      }
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || "The structured AI lesson is unavailable. Please try again.");
+      const fullData: FullCurriculumLesson = data;
+      setActiveLessonModal(fullData);
     } catch (e) {
-      const fallback = buildFullStructuredLesson(lvl, uNum, mNum);
-      setActiveLessonModal(fallback);
+      setGenerationError(e instanceof Error ? e.message : "The structured AI lesson is unavailable. Please try again.");
     } finally {
       setIsGeneratingLesson(false);
     }
@@ -842,6 +839,7 @@ export const CurriculumEngineHub: React.FC<CurriculumEngineHubProps> = ({
               Automated 13-part JSON Schema validation & Gemini 3.6 Flash pipeline ready.
             </div>
 
+            {generationError && <p className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800" role="alert">{generationError}</p>}
             <button
               id="btn_generate_custom_unit"
               onClick={() => handleLaunchLesson(customLevel, 1, 1, customTopic)}

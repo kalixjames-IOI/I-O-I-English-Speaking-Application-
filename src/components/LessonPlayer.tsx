@@ -1,5 +1,6 @@
 import React, { useState, useRef } from "react";
 import { apiFetch } from "../lib/api";
+import { describeSpeechRecognitionError, getSpeechRecognitionConstructor, normalizeTranscript } from "../lib/speechRecognition";
 import { LessonUnit, UserProfile } from "../types";
 import { Play, Volume2, Mic, MicOff, CheckCircle, ArrowRight, ArrowLeft, Trophy, Sparkles, AlertCircle, Languages, RotateCcw } from "lucide-react";
 
@@ -33,6 +34,7 @@ export const LessonPlayer: React.FC<LessonPlayerProps> = ({
   const [speechScore, setSpeechScore] = useState<number | null>(null);
   const [speechFeedback, setSpeechFeedback] = useState<string | null>(null);
   const [isAssessing, setIsAssessing] = useState(false);
+  const [speechError, setSpeechError] = useState<string | null>(null);
 
   const recognitionRef = useRef<any>(null);
 
@@ -51,23 +53,24 @@ export const LessonPlayer: React.FC<LessonPlayerProps> = ({
   };
 
   const handleStartRecording = () => {
-    if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
-      const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      recognitionRef.current = new SpeechRec();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.lang = "en-US";
-
-      recognitionRef.current.onresult = (e: any) => {
-        const text = e.results[0][0].transcript;
-        setSpokenTranscript(text);
-        assessSpokenText(text);
-      };
-
-      recognitionRef.current.start();
-      setIsRecording(true);
-    } else {
-      alert("Speech recognition not supported in browser.");
-    }
+    const SpeechRec = getSpeechRecognitionConstructor();
+    if (!SpeechRec) { setSpeechError("Speech recognition is not supported in this browser. This lesson requires a captured transcript for scoring."); return; }
+    setSpeechError(null); setSpokenTranscript(""); setSpeechScore(null); setSpeechFeedback(null);
+    const recognition = new SpeechRec();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.onresult = (event: any) => {
+      let text = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) text += `${event.results[i][0].transcript} `;
+      const transcript = normalizeTranscript(text);
+      setSpokenTranscript(transcript);
+      if (event.results[event.results.length - 1]?.isFinal && transcript) void assessSpokenText(transcript);
+    };
+    recognition.onerror = (event: any) => { setIsRecording(false); setSpeechError(describeSpeechRecognitionError(event).message); };
+    recognition.onend = () => setIsRecording(false);
+    recognitionRef.current = recognition;
+    try { recognition.start(); setIsRecording(true); } catch { setSpeechError("The microphone could not start. Check browser permission settings and try again."); }
   };
 
   const handleStopRecording = () => {
@@ -78,28 +81,19 @@ export const LessonPlayer: React.FC<LessonPlayerProps> = ({
   };
 
   const assessSpokenText = async (text: string) => {
-    setIsAssessing(true);
+    const transcript = normalizeTranscript(text);
+    if (!transcript) { setSpeechError("No transcript was captured. Speak clearly and try again."); return; }
+    setIsAssessing(true); setSpeechError(null);
     const targetPhrase = speakingPrompts[0]?.phrase || "Practice phrase";
-
     try {
-      const res = await apiFetch("/api/gemini/assess-speech", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          transcript: text,
-          targetPhrase,
-          cefrLevel: unit.level
-        })
-      });
-      const data = await res.json();
-      setSpeechScore(data.accuracyScore || 88);
-      setSpeechFeedback(data.feedbackText || "Great pronunciation!");
+      const res = await apiFetch("/api/gemini/assess-speech", { method: "POST", body: JSON.stringify({ transcript, targetPhrase, cefrLevel: unit.level }) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || typeof data.accuracyScore !== "number" || typeof data.feedbackText !== "string") throw new Error(data.error || "Speech assessment is unavailable.");
+      setSpeechScore(Math.max(0, Math.min(100, Math.round(data.accuracyScore))));
+      setSpeechFeedback(data.feedbackText);
     } catch (err) {
-      setSpeechScore(90);
-      setSpeechFeedback("Clear pronunciation with good rhythm!");
-    } finally {
-      setIsAssessing(false);
-    }
+      setSpeechScore(null); setSpeechFeedback(null); setSpeechError(err instanceof Error ? err.message : "Speech assessment is unavailable. Please try again.");
+    } finally { setIsAssessing(false); }
   };
 
   const handleQuizSubmit = () => {
@@ -298,6 +292,7 @@ export const LessonPlayer: React.FC<LessonPlayerProps> = ({
             </div>
 
             {/* Spoken Output & Score */}
+            {speechError && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-100" role="alert">{speechError}</div>}
             {spokenTranscript && (
               <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl space-y-2">
                 <p className="text-xs text-slate-300">

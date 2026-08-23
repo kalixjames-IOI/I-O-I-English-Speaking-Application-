@@ -26,6 +26,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ user, onComplete
   // Generated Roadmap
   const [generatedRoadmap, setGeneratedRoadmap] = useState<PersonalizedRoadmap | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [roadmapError, setRoadmapError] = useState<string | null>(null);
 
   const handleAnswerSelect = (optionIdx: number) => {
     const updatedAnswers = [...userAnswers, optionIdx];
@@ -54,6 +55,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ user, onComplete
   const generateAIRoadmap = async (level: CEFRLevel) => {
     setStep("generating");
     setIsLoading(true);
+    setRoadmapError(null);
 
     try {
       const response = await apiFetch("/api/gemini/onboarding-roadmap", {
@@ -64,7 +66,13 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ user, onComplete
           level,
           goal: selectedGoal,
           dailyMinutes: dailyMins,
-          learningStyle
+          learningStyle,
+          learnerContext: {
+            completedLessons: user.completedLessonIds.length,
+            totalXp: user.totalXp,
+            fluencyScore: user.fluencyScore,
+            weakAreas: user.fluencyScore < 70 ? ["speaking fluency", "pronunciation confidence"] : []
+          }
         })
       });
 
@@ -76,22 +84,8 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ user, onComplete
       setStep("roadmap");
     } catch (err) {
       console.error("Roadmap error:", err);
-      // Fallback roadmap
-      setGeneratedRoadmap({
-        curriculumName: `${selectedGoal} Masterclass for ${nativeLang} Speakers`,
-        assignedCEFR: level,
-        weeklyFocus: ["Natural Connected Speech", "Business & Social Idioms", "Confidence Building"],
-        recommendedTeacher: "Emma (US Accent)",
-        dailyPlan: [
-          { day: "Day 1", topic: "Self-Introductions & Native Connectors", minutes: dailyMins },
-          { day: "Day 2", topic: "Practical Everyday Conversation", minutes: dailyMins },
-          { day: "Day 3", topic: "Live AI Avatar Roleplay Practice", minutes: dailyMins },
-          { day: "Day 4", topic: "Pronunciation & Rhythm Polish", minutes: dailyMins },
-          { day: "Day 5", topic: "Weekly CEFR Fluency Assessment", minutes: dailyMins }
-        ],
-        aiTip: "Practice speaking out loud at least 10 minutes every day to retrain mouth muscles!"
-      });
-      setStep("roadmap");
+      setRoadmapError(err instanceof Error ? err.message : "The AI roadmap is unavailable. Please try again.");
+      setStep("profile");
     } finally {
       setIsLoading(false);
     }
@@ -119,6 +113,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ user, onComplete
         {/* Step 1: User Learning Profile Setup */}
         {step === "profile" && (
           <div className="space-y-5">
+            {roadmapError && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-100" role="alert">{roadmapError}</div>}
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <span className="p-2 rounded-xl bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">

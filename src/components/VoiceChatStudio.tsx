@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { apiFetch } from "../lib/api";
 import { AITeacher, ChatMessage, UserProfile } from "../types";
+import { describeSpeechRecognitionError, getSpeechRecognitionConstructor, normalizeTranscript } from "../lib/speechRecognition";
 import { Mic, MicOff, Send, Volume2, Sparkles, RefreshCw, MessageCircle, AlertCircle, Languages, Check, ArrowLeft } from "lucide-react";
 
 interface VoiceChatStudioProps {
@@ -27,6 +28,8 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
   const [isSpeakingTeacher, setIsSpeakingTeacher] = useState(false);
   const [showNativeTranslation, setShowNativeTranslation] = useState(false);
   const [translationMap, setTranslationMap] = useState<Record<string, string>>({});
+  const [translationErrors, setTranslationErrors] = useState<Record<string, string>>({});
+  const [speechError, setSpeechError] = useState<string | null>(null);
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -37,46 +40,29 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
 
   // Speech Recognition Setup
   useEffect(() => {
-    if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
-      const SpeechRec = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      recognitionRef.current = new SpeechRec();
-      recognitionRef.current.continuous = false;
-      recognitionRef.current.interimResults = true;
-      recognitionRef.current.lang = "en-US";
-
-      recognitionRef.current.onresult = (event: any) => {
-        let transcript = "";
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          transcript += event.results[i][0].transcript;
-        }
-        setInputSpeechText(transcript);
-      };
-
-      recognitionRef.current.onerror = (err: any) => {
-        console.warn("Speech recognition error:", err);
-        setIsRecording(false);
-      };
-
-      recognitionRef.current.onend = () => {
-        setIsRecording(false);
-      };
-    }
+    const SpeechRec = getSpeechRecognitionConstructor();
+    if (!SpeechRec) return;
+    const recognition = new SpeechRec();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-US";
+    recognition.onresult = (event: any) => {
+      let transcript = "";
+      for (let i = event.resultIndex; i < event.results.length; i += 1) transcript += `${event.results[i][0].transcript} `;
+      setInputSpeechText(normalizeTranscript(transcript));
+    };
+    recognition.onerror = (event: any) => { setIsRecording(false); setSpeechError(describeSpeechRecognitionError(event).message); };
+    recognition.onend = () => setIsRecording(false);
+    recognitionRef.current = recognition;
+    return () => { recognition.abort?.(); recognitionRef.current = null; };
   }, []);
 
   const toggleRecording = () => {
-    if (!recognitionRef.current) {
-      alert("Speech recognition is not available in this browser. Please type your message.");
-      return;
-    }
-
-    if (isRecording) {
-      recognitionRef.current.stop();
-      setIsRecording(false);
-    } else {
-      setInputSpeechText("");
-      recognitionRef.current.start();
-      setIsRecording(true);
-    }
+    if (!recognitionRef.current) { setSpeechError("Speech recognition is not supported in this browser. You can type your message instead."); return; }
+    setSpeechError(null);
+    if (isRecording) { recognitionRef.current.stop(); setIsRecording(false); return; }
+    setInputSpeechText("");
+    try { recognitionRef.current.start(); setIsRecording(true); } catch { setSpeechError("The microphone could not start. Check browser permission settings and try again."); }
   };
 
   const speakTeacherText = (text: string) => {
@@ -124,12 +110,13 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
         })
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || typeof data.reply !== "string" || !data.reply.trim()) throw new Error(data.error || "The AI teacher is unavailable. Please try again.");
 
       const teacherMsg: ChatMessage = {
         id: `t-${Date.now()}`,
         sender: "teacher",
-        text: data.reply || "That's great! Tell me more about that.",
+        text: data.reply.trim(),
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
         grammarCorrection: data.grammarCorrection,
         betterPhrasing: data.betterPhrasing,
@@ -140,15 +127,7 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
       speakTeacherText(teacherMsg.text);
     } catch (err) {
       console.error("Chat error:", err);
-      const fallbackMsg: ChatMessage = {
-        id: `t-err-${Date.now()}`,
-        sender: "teacher",
-        text: `That's very interesting! In English, we can also phrase that as: '${text}'. How are you feeling about practicing today?`,
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
-        betterPhrasing: `I am feeling enthusiastic about learning English today.`
-      };
-      setMessages((prev) => [...prev, fallbackMsg]);
-      speakTeacherText(fallbackMsg.text);
+      setSpeechError(err instanceof Error ? err.message : "The AI teacher is unavailable. Please try again.");
     } finally {
       setIsThinking(false);
     }
@@ -169,16 +148,13 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, nativeLanguage: user.nativeLanguage })
       });
-      const data = await res.json();
-      setTranslationMap((prev) => ({
-        ...prev,
-        [msgId]: data.translatedText || `[${user.nativeLanguage}]: ${text}`
-      }));
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || typeof data.translatedText !== "string" || !data.translatedText.trim()) throw new Error(data.error || "Translation is unavailable right now.");
+      setTranslationErrors((prev) => { const next = { ...prev }; delete next[msgId]; return next; });
+      setTranslationMap((prev) => ({ ...prev, [msgId]: data.translatedText.trim() }));
     } catch (err) {
-      setTranslationMap((prev) => ({
-        ...prev,
-        [msgId]: `[${user.nativeLanguage}]: ${text}`
-      }));
+      setTranslationMap((prev) => { const next = { ...prev }; delete next[msgId]; return next; });
+      setTranslationErrors((prev) => ({ ...prev, [msgId]: err instanceof Error ? err.message : "Translation is unavailable right now." }));
     }
   };
 
@@ -251,6 +227,8 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
         </div>
       )}
 
+      {speechError && <div className="flex items-start gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-100" role="alert"><AlertCircle className="h-4 w-4 shrink-0" />{speechError}</div>}
+
       {/* Messages Scroll Area */}
       <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4 custom-scrollbar">
         {messages.map((msg) => (
@@ -274,11 +252,8 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
               <p>{msg.text}</p>
 
               {/* Native Language Translation Callout */}
-              {translationMap[msg.id] && (
-                <div className="text-[11px] bg-slate-950/70 p-2 rounded-lg border border-slate-800 text-slate-300 mt-1 italic">
-                  🌐 {translationMap[msg.id]}
-                </div>
-              )}
+              {translationMap[msg.id] && <div className="mt-1 rounded-lg border border-slate-800 bg-slate-950/70 p-2 text-[11px] italic text-slate-300">Native-language assistance: {translationMap[msg.id]}</div>}
+              {translationErrors[msg.id] && <div className="mt-1 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-100" role="status">Translation unavailable: {translationErrors[msg.id]}</div>}
 
               {/* Teacher Feedback Callouts */}
               {msg.sender === "teacher" && (
