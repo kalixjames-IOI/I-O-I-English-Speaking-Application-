@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { apiFetch } from "../lib/api";
 import { audioBlobToBase64, describeAudioCaptureError, startAudioRecorder, type AudioRecorderHandle } from "../lib/audioRecorder";
 import { AITeacher, ChatMessage, UserProfile } from "../types";
+import { useAuth } from "../lib/AuthContext";
 import { describeSpeechRecognitionError, getSpeechRecognitionConstructor, normalizeTranscript } from "../lib/speechRecognition";
 import { Mic, MicOff, Send, Volume2, Sparkles, RefreshCw, MessageCircle, AlertCircle, Languages, Check, ArrowLeft } from "lucide-react";
 
@@ -12,6 +13,8 @@ interface VoiceChatStudioProps {
 }
 
 export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user, onBack }) => {
+  const { user: authUser } = useAuth();
+  const isAuthenticated = Boolean(authUser);
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: "m-1",
@@ -111,6 +114,10 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
   };
 
   const toggleRecording = () => {
+    if (!isAuthenticated) {
+      setSpeechError("Please sign in first to use AI voice practice.");
+      return;
+    }
     if (!recognitionRef.current) {
       if (isRecording) void stopRecordedAudio();
       else void startRecordedAudio();
@@ -139,6 +146,10 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
 
   const handleSendMessage = async (textToSend?: string) => {
     const text = textToSend || inputSpeechText;
+    if (!isAuthenticated) {
+      setSpeechError("Please sign in first to chat with the AI teacher.");
+      return;
+    }
     if (!text.trim() || isThinking) return;
 
     const userMsg: ChatMessage = {
@@ -284,6 +295,7 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
         </div>
       )}
 
+      {!isAuthenticated && <div className="flex items-start gap-2 border-b border-indigo-500/30 bg-indigo-500/10 px-4 py-2 text-xs text-indigo-100" role="status"><AlertCircle className="h-4 w-4 shrink-0" />Sign in above to send messages, use the microphone, and receive AI replies.</div>}
       {speechError && <div className="flex items-start gap-2 border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-100" role="alert"><AlertCircle className="h-4 w-4 shrink-0" />{speechError}</div>}
 
       {/* Messages Scroll Area */}

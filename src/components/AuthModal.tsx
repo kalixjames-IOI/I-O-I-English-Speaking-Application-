@@ -7,6 +7,21 @@ interface AuthModalProps {
   onComplete?: () => void;
 }
 
+function formatAuthError(message: string, mode: 'login' | 'signup'): string {
+  const normalized = message.trim();
+  if (/email rate limit|rate limit exceeded|too many requests/i.test(normalized)) {
+    return mode === 'signup'
+      ? "Supabase temporarily limited new sign-ups for this email. Please wait before trying again, or use Log In if this email already has an account."
+      : "Too many sign-in attempts. Please wait a little and try again before signing in.";
+  }
+  if (/user already registered|already exists/i.test(normalized)) {
+    return "This email is already registered. Use Log In instead of creating another account.";
+  }
+  if (/invalid login credentials/i.test(normalized)) return "Email or password is incorrect. Check both fields and try again.";
+  if (/email not confirmed/i.test(normalized)) return "Please confirm your email from the Supabase confirmation message, then use Log In.";
+  return normalized || "Authentication failed. Please try again.";
+}
+
 export const AuthModal: React.FC<AuthModalProps> = ({ onClose, onComplete }) => {
   const { signUp, signIn, signInWithGoogle } = useAuth();
   const [mode, setMode] = useState<'login' | 'signup'>('signup');
@@ -24,15 +39,15 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, onComplete }) => 
     try {
       if (mode === 'signup') {
         const { error } = await signUp(email, password, fullName);
-        if (error) setError(error.message);
+        if (error) setError(formatAuthError(error.message, mode));
         else onComplete?.();
       } else {
         const { error } = await signIn(email, password);
-        if (error) setError(error.message);
+        if (error) setError(formatAuthError(error.message, mode));
         else onComplete?.();
       }
     } catch (err: any) {
-      setError(err.message || 'An unexpected error occurred');
+      setError(formatAuthError(err.message || 'An unexpected error occurred', mode));
     } finally {
       setLoading(false);
     }
@@ -42,7 +57,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, onComplete }) => 
     setError(null);
     setLoading(true);
     const { error } = await signInWithGoogle();
-    if (error) setError(error.message);
+    if (error) setError(formatAuthError(error.message, 'login'));
     setLoading(false);
   };
 
@@ -86,8 +101,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({ onClose, onComplete }) => 
 
           {/* Error */}
           {error && (
-            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm p-3 rounded-lg">
-              {error}
+            <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm p-3 rounded-lg space-y-2" role="alert">
+              <p>{error}</p>
+              {mode === 'signup' && /sign-ups|already registered/i.test(error) && (
+                <button type="button" onClick={() => { setMode('login'); setError(null); }} className="font-semibold text-indigo-600 dark:text-indigo-300 underline underline-offset-2">
+                  Use Log In instead
+                </button>
+              )}
             </div>
           )}
 
