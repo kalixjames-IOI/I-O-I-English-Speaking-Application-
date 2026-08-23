@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { apiFetch } from "../lib/api";
 import { AITeacher, ChatMessage, UserProfile } from "../types";
 import { Mic, MicOff, Send, Volume2, Sparkles, RefreshCw, MessageCircle, AlertCircle, Languages, Check, ArrowLeft } from "lucide-react";
 
@@ -109,7 +110,7 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
     setIsThinking(true);
 
     try {
-      const response = await fetch("/api/gemini/chat-teacher", {
+      const response = await apiFetch("/api/gemini/chat-teacher", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -163,7 +164,7 @@ export const VoiceChatStudio: React.FC<VoiceChatStudioProps> = ({ teacher, user,
     }
 
     try {
-      const res = await fetch("/api/gemini/translate-explain", {
+      const res = await apiFetch("/api/gemini/translate-explain", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text, nativeLanguage: user.nativeLanguage })

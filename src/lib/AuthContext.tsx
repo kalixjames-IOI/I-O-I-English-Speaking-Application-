@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { supabase, auth as authHelpers } from './supabase';
-import type { Session, User } from '@supabase/supabase-js';
+import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import type { Session, User } from "@supabase/supabase-js";
+import { auth as authHelpers, db, isSupabaseConfigured } from "./supabase";
 
 interface AuthContextType {
   session: Session | null;
@@ -18,7 +18,7 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) throw new Error('useAuth must be used within AuthProvider');
+  if (!context) throw new Error("useAuth must be used within AuthProvider");
   return context;
 };
 
@@ -29,41 +29,56 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [profile, setProfile] = useState<any | null>(null);
 
   const refreshProfile = useCallback(async () => {
-    if (!user) return;
-    const { data, error } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle();
+    if (!user || !isSupabaseConfigured) {
+      setProfile(null);
+      return;
+    }
+    const { data } = await db.ensureProfile(user.id, user.email, user.user_metadata?.full_name);
     if (data) setProfile(data);
   }, [user]);
 
   useEffect(() => {
-    // Check active session
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s);
-      setUser(s?.user ?? null);
+    let mounted = true;
+    authHelpers.getSession().then(({ data: { session: currentSession } }) => {
+      if (!mounted) return;
+      setSession(currentSession);
+      setUser(currentSession?.user ?? null);
+      setLoading(false);
+    }).catch(() => {
+      if (mounted) setLoading(false);
+    });
+
+    const { data: { subscription } } = authHelpers.onAuthStateChange((currentSession: Session | null) => {
+      setSession(currentSession);
+      setUser(currentSession?.user ?? null);
+      setProfile(null);
       setLoading(false);
     });
 
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
-      setUser(s?.user ?? null);
-      setProfile(null); // Reset profile on auth change
-      setLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
-    if (user) refreshProfile();
+    if (user) void refreshProfile();
+    else setProfile(null);
   }, [user, refreshProfile]);
 
   const signUp = async (email: string, password: string, fullName?: string) => {
-    const { error } = await authHelpers.signUp(email, password, fullName);
+    const { data, error } = await authHelpers.signUp(email, password, fullName);
+    if (!error && data.user && data.session && isSupabaseConfigured) {
+      await db.ensureProfile(data.user.id, data.user.email, fullName);
+    }
     return { error };
   };
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await authHelpers.signIn(email, password);
+    const { data, error } = await authHelpers.signIn(email, password);
+    if (!error && data.user && isSupabaseConfigured) {
+      await db.ensureProfile(data.user.id, data.user.email, data.user.user_metadata?.full_name);
+    }
     return { error };
   };
 
@@ -80,17 +95,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   return (
-    <AuthContext.Provider value={{
-      session,
-      user,
-      loading,
-      signUp,
-      signIn,
-      signInWithGoogle,
-      signOut,
-      refreshProfile,
-      profile,
-    }}>
+    <AuthContext.Provider value={{ session, user, loading, signUp, signIn, signInWithGoogle, signOut, refreshProfile, profile }}>
       {children}
     </AuthContext.Provider>
   );

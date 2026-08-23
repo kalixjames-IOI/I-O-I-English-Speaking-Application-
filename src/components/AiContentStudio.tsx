@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { apiFetch } from "../lib/api";
 import { UserProfile, CEFRLevel } from "../types";
 import { Sparkles, RefreshCw, Volume2, MessageSquare, BookOpen, Layers } from "lucide-react";
 
@@ -26,7 +27,7 @@ export const AiContentStudio: React.FC<AiContentStudioProps> = ({ user }) => {
 
     setIsGenerating(true);
     try {
-      const response = await fetch("/api/gemini/generate-custom-lesson", {
+      const response = await apiFetch("/api/gemini/generate-custom-lesson", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { apiFetch } from "../lib/api";
 import {
   BookOpen,
   GraduationCap,
@@ -114,7 +115,7 @@ export const CurriculumEngineHub: React.FC<CurriculumEngineHubProps> = ({
     setCurrentStepIndex(0);
 
     try {
-      const resp = await fetch("/api/gemini/generate-full-lesson", {
+      const resp = await apiFetch("/api/gemini/generate-full-lesson", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

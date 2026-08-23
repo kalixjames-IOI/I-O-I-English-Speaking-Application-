@@ -1,7 +1,7 @@
 {
-  "name": "react-example",
+  "name": "ioi-english-speaking",
   "private": true,
-  "version": "0.0.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
@@ -9,7 +9,8 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.cjs",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:supabase": "node test-supabase.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.0",

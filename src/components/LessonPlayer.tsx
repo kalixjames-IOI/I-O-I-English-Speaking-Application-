@@ -1,4 +1,5 @@
 import React, { useState, useRef } from "react";
+import { apiFetch } from "../lib/api";
 import { LessonUnit, UserProfile } from "../types";
 import { Play, Volume2, Mic, MicOff, CheckCircle, ArrowRight, ArrowLeft, Trophy, Sparkles, AlertCircle, Languages, RotateCcw } from "lucide-react";
 
@@ -81,7 +82,7 @@ export const LessonPlayer: React.FC<LessonPlayerProps> = ({
     const targetPhrase = speakingPrompts[0]?.phrase || "Practice phrase";
 
     try {
-      const res = await fetch("/api/gemini/assess-speech", {
+      const res = await apiFetch("/api/gemini/assess-speech", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

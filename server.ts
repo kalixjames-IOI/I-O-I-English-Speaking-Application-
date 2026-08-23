@@ -2,6 +2,7 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type, Modality } from "@google/genai";
+import { createClient } from "@supabase/supabase-js";
 import { createServer as createViteServer } from "vite";
 
 dotenv.config();
@@ -10,6 +11,47 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 
 const PORT = 3000;
+const requireAiAuth = process.env.AI_REQUIRE_AUTH === "true" || process.env.NODE_ENV === "production";
+const serverSupabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const serverSupabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+const authClient = serverSupabaseUrl && serverSupabaseAnonKey ? createClient(serverSupabaseUrl, serverSupabaseAnonKey, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+const requestWindows = new Map<string, { startedAt: number; count: number }>();
+
+app.use("/api/gemini", async (req, res, next) => {
+  const key = req.header("authorization") || req.ip || "anonymous";
+  const now = Date.now();
+  const windowState = requestWindows.get(key);
+  if (!windowState || now - windowState.startedAt >= 60_000) {
+    requestWindows.set(key, { startedAt: now, count: 1 });
+  } else if (windowState.count >= 20) {
+    res.status(429).json({ error: "Too many AI requests. Please wait a minute and try again." });
+    return;
+  } else {
+    windowState.count += 1;
+  }
+
+  if (!requireAiAuth) {
+    next();
+    return;
+  }
+  const authorization = req.header("authorization");
+  const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
+  if (!authClient || !token) {
+    res.status(401).json({ error: "Authentication is required for AI features." });
+    return;
+  }
+  const { data, error } = await authClient.auth.getUser(token);
+  if (error || !data.user) {
+    res.status(401).json({ error: "Your session is invalid or expired." });
+    return;
+  }
+  res.locals.userId = data.user.id;
+  if (!process.env.GEMINI_API_KEY) {
+    res.status(503).json({ error: "AI service is not configured." });
+    return;
+  }
+  next();
+});
 
 // Initialize Gemini Client safely
 const getGeminiClient = () => {
@@ -101,7 +143,7 @@ Return JSON conforming strictly to the requested schema.`;
     res.json(data);
   } catch (error: any) {
     console.error("Roadmap generation error:", error);
-    res.status(500).json({ error: error.message || "Failed to generate roadmap" });
+    res.status(500).json({ error: "Failed to generate roadmap" });
   }
 });
 
@@ -167,7 +209,7 @@ Respond in JSON according to schema.`;
     res.json(data);
   } catch (error: any) {
     console.error("Teacher chat error:", error);
-    res.status(500).json({ error: error.message || "Failed to communicate with AI teacher" });
+    res.status(500).json({ error: "Failed to communicate with AI teacher" });
   }
 });
 
@@ -237,7 +279,7 @@ Provide a comprehensive speech assessment JSON including scores (0-100), word-le
     res.json(data);
   } catch (error: any) {
     console.error("Speech assessment error:", error);
-    res.status(500).json({ error: error.message || "Failed to assess speech" });
+    res.status(500).json({ error: "Failed to assess speech" });
   }
 });
 
@@ -358,7 +400,7 @@ Evaluate grammar, vocabulary level, sentence structure, coherence, and suggest h
     res.json(data);
   } catch (error: any) {
     console.error("Essay assessment error:", error);
-    res.status(500).json({ error: error.message || "Failed to assess essay" });
+    res.status(500).json({ error: "Failed to assess essay" });
   }
 });
 
@@ -416,7 +458,7 @@ English Text: "${text}"`;
     res.json(data);
   } catch (error: any) {
     console.error("Translation error:", error);
-    res.status(500).json({ error: error.message || "Failed to translate" });
+    res.status(500).json({ error: "Failed to translate" });
   }
 });
 
@@ -496,7 +538,7 @@ Learner Goal: "${userGoal || "Speaking Fluency"}"`;
     res.json(data);
   } catch (error: any) {
     console.error("Custom lesson generation error:", error);
-    res.status(500).json({ error: error.message || "Failed to generate custom lesson" });
+    res.status(500).json({ error: "Failed to generate custom lesson" });
   }
 });
 
@@ -845,7 +887,7 @@ Required 13-part lesson schema in JSON:
     res.json(data);
   } catch (error: any) {
     console.error("Full lesson generation error:", error);
-    res.status(500).json({ error: error.message || "Failed to generate full lesson" });
+    res.status(500).json({ error: "Failed to generate full lesson" });
   }
 });
 
@@ -1292,7 +1334,7 @@ Return a valid JSON object matching the requested schema with ALL 8 required ele
     res.json(data);
   } catch (error: any) {
     console.error("Video lesson package generation error:", error);
-    res.status(500).json({ error: error.message || "Failed to generate video lesson package" });
+    res.status(500).json({ error: "Failed to generate video lesson package" });
   }
 });
 

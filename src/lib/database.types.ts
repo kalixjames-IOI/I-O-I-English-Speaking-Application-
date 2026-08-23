@@ -368,6 +368,7 @@ export type Database = {
           score: number | null
           speaking_score: number | null
           user_id: string | null
+          xp_earned: number
         }
         Insert: {
           completion_status?: string | null
@@ -377,6 +378,7 @@ export type Database = {
           score?: number | null
           speaking_score?: number | null
           user_id?: string | null
+          xp_earned?: number
         }
         Update: {
           completion_status?: string | null
@@ -386,6 +388,7 @@ export type Database = {
           score?: number | null
           speaking_score?: number | null
           user_id?: string | null
+          xp_earned?: number
         }
         Relationships: [
           {

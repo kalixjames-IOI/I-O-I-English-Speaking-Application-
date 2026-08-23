@@ -1,70 +1,47 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = 'https://jipmxnqbndgkwnlpdrkf.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_NUoQd5OHcYZhcvPb_LnjXg_miq9RZwt';
+const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-async function testDatabase() {
-  console.log('=== I O I Education Network - Supabase Test Suite ===\n');
-
-  // Test 1: Connection Health
-  console.log('1. Testing database connection...');
-  const { data: courses, error: connError } = await supabase.from('courses').select('*').limit(1);
-  if (connError) {
-    console.log('   FAIL: Connection error -', connError.message);
-    return;
-  }
-  console.log('   PASS: Connected successfully\n');
-
-  // Test 2: List all tables with data
-  console.log('2. Verifying seeded data...\n');
-  const tables = ['courses', 'levels', 'units', 'lessons', 'vocabulary', 'dialogues', 'grammar_topics', 'quizzes', 'speaking_practice'];
-  for (const table of tables) {
-    const { data, error } = await supabase.from(table).select('*').limit(1);
-    const count = data ? data.length : 0;
-    console.log(`   ${table}: ${count > 0 ? '✓ Data present' : '✗ Empty'} (${count} rows)`);
-  }
-
-  // Test 3: Full lesson data retrieval
-  console.log('\n3. Testing full lesson retrieval (Greetings & Self Introduction)...');
-  const lessonId = '44444444-4444-4444-4444-444444444441';
-  const [lesson, vocab, dialogues, grammar, quizzes, speaking] = await Promise.all([
-    supabase.from('lessons').select('*').eq('id', lessonId).single(),
-    supabase.from('vocabulary').select('*').eq('lesson_id', lessonId),
-    supabase.from('dialogues').select('*').eq('lesson_id', lessonId),
-    supabase.from('grammar_topics').select('*').eq('lesson_id', lessonId),
-    supabase.from('quizzes').select('*').eq('lesson_id', lessonId),
-    supabase.from('speaking_practice').select('*').eq('lesson_id', lessonId),
-  ]);
-
-  console.log(`   Lesson: "${lesson.data?.title}"`);
-  console.log(`   Vocabulary: ${vocab.data?.length} words`);
-  console.log(`   Dialogues: ${dialogues.data?.length} lines`);
-  console.log(`   Grammar: ${grammar.data?.length} topics`);
-  console.log(`   Quizzes: ${quizzes.data?.length} questions`);
-  console.log(`   Speaking: ${speaking.data?.length} scenarios`);
-  console.log('   PASS: Full lesson loaded successfully\n');
-
-  // Test 4: RLS check (anonymous access)
-  console.log('4. Testing Row Level Security (anonymous access)...');
-  const { data: publicData, error: publicError } = await supabase.from('courses').select('*');
-  if (publicData) {
-    console.log('   PASS: Public read access works (courses visible without auth)');
-  } else {
-    console.log('   FAIL: Cannot read courses -', publicError?.message);
-  }
-
-  // Test 5: Auth configuration
-  console.log('\n5. Testing auth endpoint...');
-  const { error: authError } = await supabase.auth.getSession();
-  if (!authError) {
-    console.log('   PASS: Auth endpoint responding\n');
-  } else {
-    console.log('   FAIL: Auth error -', authError.message);
-  }
-
-  console.log('=== All tests complete ===');
+if (!url || !key) {
+  console.log("SKIP: SUPABASE_URL and SUPABASE_ANON_KEY are not configured.");
+  process.exit(0);
 }
 
-testDatabase().catch(console.error);
+const supabase = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+const contentTables = ["courses", "levels", "units", "lessons", "vocabulary", "dialogues", "grammar_topics", "quizzes", "speaking_practice"];
+
+async function testDatabase() {
+  console.log("=== I O I Education Network — Supabase smoke test ===");
+  const { data: courses, error: connectionError } = await supabase.from("courses").select("id,title,status").limit(1);
+  if (connectionError) throw new Error(`Connection failed: ${connectionError.message}`);
+  console.log(`PASS: public course query responded (${courses?.length ?? 0} row sample)`);
+
+  for (const table of contentTables) {
+    const { data, error } = await supabase.from(table).select("*").limit(1);
+    console.log(`${error ? "FAIL" : "PASS"}: ${table} (${error ? error.message : `${data?.length ?? 0} row sample`})`);
+  }
+
+  const { data: lesson, error: lessonError } = await supabase.from("lessons").select("id,title").order("created_at", { ascending: true }).limit(1).maybeSingle();
+  if (lessonError || !lesson) {
+    console.log(`INFO: No lesson sample available (${lessonError?.message ?? "empty table"}).`);
+  } else {
+    const [vocabulary, dialogues, grammar, quizzes, speaking] = await Promise.all([
+      supabase.from("vocabulary").select("id").eq("lesson_id", lesson.id).limit(20),
+      supabase.from("dialogues").select("id").eq("lesson_id", lesson.id).limit(20),
+      supabase.from("grammar_topics").select("id").eq("lesson_id", lesson.id).limit(20),
+      supabase.from("quizzes").select("id").eq("lesson_id", lesson.id).limit(20),
+      supabase.from("speaking_practice").select("id").eq("lesson_id", lesson.id).limit(20),
+    ]);
+    console.log(`PASS: lesson sample “${lesson.title}” — vocab ${vocabulary.data?.length ?? 0}, dialogue ${dialogues.data?.length ?? 0}, grammar ${grammar.data?.length ?? 0}, quiz ${quizzes.data?.length ?? 0}, speaking ${speaking.data?.length ?? 0}`);
+  }
+
+  const { error: authError } = await supabase.auth.getSession();
+  if (authError) throw new Error(`Auth endpoint failed: ${authError.message}`);
+  console.log("PASS: auth endpoint responded");
+}
+
+testDatabase().catch((error) => {
+  console.error(`FAIL: ${error.message}`);
+  process.exitCode = 1;
+});

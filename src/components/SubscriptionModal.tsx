@@ -1,20 +1,16 @@
-import React, { useState } from "react";
+import React from "react";
 import { PlanType } from "../types";
 import { Check, Crown, Sparkles, Award, ShieldCheck, Zap } from "lucide-react";
 
 interface SubscriptionModalProps {
   currentPlan: PlanType;
-  onUpgradePlan: (newPlan: PlanType) => void;
   onClose: () => void;
 }
 
 export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
   currentPlan,
-  onUpgradePlan,
   onClose
 }) => {
-  const [selectedPlan, setSelectedPlan] = useState<PlanType>(currentPlan);
-  const [isUpgrading, setIsUpgrading] = useState(false);
 
   const plans = [
     {
@@ -72,15 +68,6 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
     }
   ];
 
-  const handleSimulateUpgrade = (planId: PlanType) => {
-    setIsUpgrading(true);
-    setTimeout(() => {
-      onUpgradePlan(planId);
-      setIsUpgrading(false);
-      onClose();
-    }, 1200);
-  };
-
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
       <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-2xl p-5 sm:p-7 shadow-2xl space-y-6 relative overflow-hidden">
@@ -109,7 +96,6 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
             return (
               <div
                 key={p.id}
-                onClick={() => setSelectedPlan(p.id)}
                 className={`rounded-2xl p-4 border flex flex-col justify-between space-y-4 relative transition-all cursor-pointer ${p.color}`}
               >
                 {/* Badge */}
@@ -141,14 +127,11 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
 
                 {/* Upgrade Action Button */}
                 <button
-                  disabled={isCurrent || isUpgrading}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleSimulateUpgrade(p.id);
-                  }}
+                  disabled
+                  onClick={(e) => e.stopPropagation()}
                   className={`w-full py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-md disabled:opacity-50 ${p.buttonColor}`}
                 >
-                  {isCurrent ? "Active Plan" : isUpgrading ? "Upgrading..." : `Upgrade to ${p.name.split(" ")[0]}`}
+                  {isCurrent ? "Active Plan" : "Billing setup required"}
                 </button>
               </div>
             );
@@ -161,7 +144,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
             <span>Cancel or modify subscription anytime in Settings. Prices in USD.</span>
           </div>
-          <span className="text-[10px] text-indigo-300 font-semibold">1,000+ Learners Active</span>
+          <span className="text-[10px] text-amber-300 font-semibold">Paid billing is not connected</span>
         </div>
       </div>
     </div>

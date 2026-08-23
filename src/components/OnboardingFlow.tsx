@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { apiFetch } from "../lib/api";
 import { UserProfile, CEFRLevel, PersonalizedRoadmap } from "../types";
 import { NATIVE_LANGUAGES, LEARNING_GOALS, PLACEMENT_QUESTIONS } from "../data/initialData";
 import { Sparkles, Globe, Target, Clock, BookOpen, CheckCircle, ArrowRight, BrainCircuit, RefreshCw, Award } from "lucide-react";
@@ -55,7 +56,7 @@ export const OnboardingFlow: React.FC<OnboardingFlowProps> = ({ user, onComplete
     setIsLoading(true);
 
     try {
-      const response = await fetch("/api/gemini/onboarding-roadmap", {
+      const response = await apiFetch("/api/gemini/onboarding-roadmap", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

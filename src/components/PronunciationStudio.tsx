@@ -1,4 +1,5 @@
 import React, { useState, useRef } from "react";
+import { apiFetch } from "../lib/api";
 import { UserProfile, SpeechAssessmentResult } from "../types";
 import { Mic, MicOff, Volume2, Sparkles, RefreshCw, CheckCircle, Award, VolumeX } from "lucide-react";
 
@@ -54,7 +55,7 @@ export const PronunciationStudio: React.FC<PronunciationStudioProps> = ({ user }
   const runSpeechAssessment = async (text: string) => {
     setIsAssessing(true);
     try {
-      const response = await fetch("/api/gemini/assess-speech", {
+      const response = await apiFetch("/api/gemini/assess-speech", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

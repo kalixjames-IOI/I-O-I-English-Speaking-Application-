@@ -10,14 +10,14 @@ This document describes the complete Supabase database architecture and applicat
 
 | Item | Value |
 |------|-------|
-| **Project URL** | `https://jipmxnqbndgkwnlpdrkf.supabase.co` |
-| **Publishable Key** | `sb_publishable_NUoQd5OHcYZhcvPb_LnjXg_miq9RZwt` |
+| **Project URL** | Configured at deployment time via `SUPABASE_URL` / `VITE_SUPABASE_URL` |
+| **Publishable Key** | Configured at deployment time via `SUPABASE_ANON_KEY` / `VITE_SUPABASE_ANON_KEY` |
 | **Platform** | Android + iOS + Web |
 | **Business Model** | Subscription-based |
 
 ---
 
-## Database Schema (12 Tables)
+## Database Schema (15 Tables)
 
 ### 1. profiles
 Stores user information linked to Supabase Auth.
@@ -172,14 +172,23 @@ Manages paid user subscriptions.
 | payment_provider | TEXT | Stripe/PayPal/etc. |
 | created_at | TIMESTAMPTZ | Creation time |
 
+### 13. community_posts
+Stores authenticated learner posts with ownership and timestamps.
+
+### 14. community_comments
+Stores replies attached to community posts with ownership and timestamps.
+
+### 15. community_post_reactions
+Stores one reaction per user and post.
+
 ---
 
 ## Authentication
 
 - **Email/Password**: Users can sign up with email and password
 - **Google OAuth**: One-click Google sign-in
-- **Auto Profile Creation**: Trigger automatically creates a `profiles` row when a user signs up
-- **Profile Sync**: Updates to auth metadata sync to the profiles table
+- **Auto Profile Creation**: The versioned migration creates a trigger, and the client also performs an idempotent profile bootstrap after authentication.
+- **Profile Sync**: The authenticated client updates only its own profile row.
 
 ---
 
@@ -190,17 +199,20 @@ All 12 tables have RLS enabled with the following policy structure:
 | Table | Read Access | Write Access |
 |-------|------------|--------------|
 | profiles | Own profile only | Own profile only |
-| courses | Public (all users) | Authenticated users |
-| levels | Public (all users) | Authenticated users |
-| units | Public (all users) | Authenticated users |
-| lessons | Public (all users) | Authenticated users |
-| vocabulary | Public (all users) | Authenticated users |
-| dialogues | Public (all users) | Authenticated users |
-| grammar_topics | Public (all users) | Authenticated users |
-| quizzes | Public (all users) | Authenticated users |
-| speaking_practice | Public (all users) | Authenticated users |
+| courses | Public (active rows) | No client write; content is managed by trusted deployment tooling |
+| levels | Public (all rows) | No client write; content is managed by trusted deployment tooling |
+| units | Public (all rows) | No client write; content is managed by trusted deployment tooling |
+| lessons | Public (all rows) | No client write; content is managed by trusted deployment tooling |
+| vocabulary | Public (all rows) | No client write; content is managed by trusted deployment tooling |
+| dialogues | Public (all rows) | No client write; content is managed by trusted deployment tooling |
+| grammar_topics | Public (all rows) | No client write; content is managed by trusted deployment tooling |
+| quizzes | Public (all rows) | No client write; content is managed by trusted deployment tooling |
+| speaking_practice | Public (all rows) | No client write; content is managed by trusted deployment tooling |
 | user_progress | Own data only | Own data only |
-| subscriptions | Own data only | Own data only |
+| subscriptions | Own data only | Read-only client access; billing writes are server/webhook controlled |
+| community_posts | Public | Authenticated owner only |
+| community_comments | Public | Authenticated owner only |
+| community_post_reactions | Public | Authenticated owner only |
 
 ---
 
@@ -273,8 +285,10 @@ const lessonData = await loadFullLesson(lessonId);
 ## Environment Variables
 
 ```env
-VITE_SUPABASE_URL=https://jipmxnqbndgkwnlpdrkf.supabase.co
-VITE_SUPABASE_ANON_KEY=sb_publishable_NUoQd5OHcYZhcvPb_LnjXg_miq9RZwt
+SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+SUPABASE_ANON_KEY=YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY
+VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
+VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY
 ```
 
 ---
@@ -300,12 +314,6 @@ VITE_SUPABASE_ANON_KEY=sb_publishable_NUoQd5OHcYZhcvPb_LnjXg_miq9RZwt
 
 ---
 
-## Testing Results
+## Verification Notes
 
-All 5 test categories passed:
-
-1. **Database Connection**: Connected successfully
-2. **Seeded Data**: All 9 content tables contain data
-3. **Full Lesson Retrieval**: 6 vocab, 8 dialogues, 3 grammar, 5 quizzes, 3 speaking scenarios loaded
-4. **RLS (Anonymous)**: Public read access works correctly
-5. **Auth Endpoint**: Responding correctly
+The repository contains a versioned migration at `supabase/migrations/0001_production_schema.sql` and an environment-driven smoke test at `test-supabase.mjs`. The selected Supabase project was discovered but reported `INACTIVE`; remote table and migration verification therefore timed out and must be repeated after the project is restored. Do not treat this document as evidence that the remote schema or seed data is currently live.

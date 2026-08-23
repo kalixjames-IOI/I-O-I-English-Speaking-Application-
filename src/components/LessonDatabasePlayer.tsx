@@ -3,6 +3,7 @@ import { AudioLines, BookOpen, Brain, CheckCircle2, ChevronLeft, ChevronRight, C
 import { db, isSupabaseConfigured, loadFullLesson } from "../lib/supabase";
 import { getDemoLessonBundle } from "../data/curriculumCatalog";
 import { useAuth } from "../lib/AuthContext";
+import { apiFetch } from "../lib/api";
 
 interface LessonDatabasePlayerProps {
   lessonId: string;
@@ -102,10 +103,15 @@ export const LessonDatabasePlayer: React.FC<LessonDatabasePlayerProps> = ({ less
     setIsRecording(false);
     const fallbackScore = 86;
     try {
-      const response = await fetch("/api/gemini/assess-speech", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ transcript: currentSpeakingPhrase, targetPhrase: currentSpeakingPhrase, cefrLevel: "B1" }) });
+      const response = await apiFetch("/api/gemini/assess-speech", { method: "POST", body: JSON.stringify({ transcript: currentSpeakingPhrase, targetPhrase: currentSpeakingPhrase, cefrLevel: "B1" }) });
       if (!response.ok) throw new Error("assessment failed");
       const result = await response.json();
-      setSpeechResult({ score: Math.round((result.accuracyScore + result.fluencyScore + result.pronunciationScore) / 3), feedback: result.feedbackText });
+      const score = Math.max(0, Math.min(100, Math.round((Number(result.accuracyScore) + Number(result.fluencyScore) + Number(result.pronunciationScore)) / 3)));
+      setSpeechResult({ score, feedback: result.feedbackText || "Good work. Repeat once more while keeping the final word strong." });
+      if (user && isSupabaseConfigured && !lessonId.startsWith("demo-")) {
+        await db.upsertProgress(user.id, lessonId, { completion_status: "in_progress", speaking_score: score });
+      }
+      return;
     } catch {
       setSpeechResult({ score: fallbackScore, feedback: "Good rhythm and clear delivery. Repeat once more while keeping the final word strong." });
     }
@@ -122,7 +128,8 @@ export const LessonDatabasePlayer: React.FC<LessonDatabasePlayerProps> = ({ less
     setQuizAnswered(true);
     if (user && isSupabaseConfigured && !lessonId.startsWith("demo-")) {
       const total = quizzes.length;
-      await db.upsertProgress(user.id, lessonId, { completion_status: quizIndex === total - 1 ? "completed" : "in_progress", score: total ? Math.round((nextScore / total) * 100) : 0 });
+      const score = total ? Math.round((nextScore / total) * 100) : 0;
+      await db.upsertProgress(user.id, lessonId, { completion_status: quizIndex === total - 1 ? "completed" : "in_progress", score, xp_earned: quizIndex === total - 1 ? score : undefined });
     }
   };
 

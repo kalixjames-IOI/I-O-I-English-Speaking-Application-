@@ -1,4 +1,5 @@
 import { AIVideoLessonPackage, CEFRLevel, SubtitleCue, StoryboardScene, AITeacher } from "../types";
+import { apiFetch } from "../lib/api";
 import { AI_TEACHERS } from "../data/initialData";
 
 interface GenerateVideoParams {
@@ -17,7 +18,7 @@ export async function generateVideoLessonPackage(params: GenerateVideoParams): P
   const { lessonTitle, cefrLevel, category = "General", teacherName = "Emma (US Accent)", existingLessonData } = params;
 
   try {
-    const response = await fetch("/api/gemini/generate-video-lesson", {
+    const response = await apiFetch("/api/gemini/generate-video-lesson", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

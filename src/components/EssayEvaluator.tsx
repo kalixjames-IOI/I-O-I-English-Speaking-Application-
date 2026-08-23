@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { apiFetch } from "../lib/api";
 import { UserProfile, EssayResult } from "../types";
 import { BookOpen, Sparkles, RefreshCw, CheckCircle, AlertCircle, Award, FileText } from "lucide-react";
 
@@ -24,7 +25,7 @@ export const EssayEvaluator: React.FC<EssayEvaluatorProps> = ({ user }) => {
     setIsEvaluating(true);
 
     try {
-      const response = await fetch("/api/gemini/assess-essay", {
+      const response = await apiFetch("/api/gemini/assess-essay", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

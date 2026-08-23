@@ -1,4 +1,4 @@
-package com.ioi.company.englishspeaking;
+package com.ioi.englishspeaking;
 
 import com.getcapacitor.BridgeActivity;
 

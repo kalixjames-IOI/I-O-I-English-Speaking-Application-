@@ -35,6 +35,27 @@ function AppContent() {
     setUser((previous) => ({ ...previous, id: authUser.id, email: authUser.email || previous.email, name: profile?.full_name || authUser.user_metadata?.full_name || previous.name }));
   }, [authUser, profile]);
 
+  React.useEffect(() => {
+    if (!authUser || !isSupabaseConfigured) return;
+    let active = true;
+    void Promise.all([db.getProgress(authUser.id), db.getSubscription(authUser.id)]).then(([progressResult, subscriptionResult]) => {
+      if (!active) return;
+      if (!progressResult.error) {
+        const rows = progressResult.data ?? [];
+        setUser((previous) => ({
+          ...previous,
+          completedLessonIds: rows.filter((row) => row.completion_status === "completed" && row.lesson_id).map((row) => row.lesson_id as string),
+          totalXp: rows.reduce((sum, row) => sum + Number(row.xp_earned ?? 0), 0),
+        }));
+      }
+      if (!subscriptionResult.error && subscriptionResult.data?.plan_name) {
+        const plan = subscriptionResult.data.plan_name as PlanType;
+        if (["free", "premium", "professional"].includes(plan)) setUser((previous) => ({ ...previous, plan }));
+      }
+    });
+    return () => { active = false; };
+  }, [authUser]);
+
   const updateUser = (fields: Partial<UserProfile>) => setUser((previous) => ({ ...previous, ...fields }));
   const handleUpdateUser = (fields: Partial<UserProfile>) => {
     updateUser(fields);
@@ -43,7 +64,10 @@ function AppContent() {
     }
   };
   const handleCompleteLesson = (xpGained: number) => {
-    updateUser({ totalXp: user.totalXp + xpGained, completedLessonIds: activeLessonId ? Array.from(new Set([...user.completedLessonIds, activeLessonId])) : user.completedLessonIds });
+    const alreadyCompleted = activeLessonId ? user.completedLessonIds.includes(activeLessonId) : false;
+    if (!alreadyCompleted) {
+      updateUser({ totalXp: user.totalXp + xpGained, completedLessonIds: activeLessonId ? Array.from(new Set([...user.completedLessonIds, activeLessonId])) : user.completedLessonIds });
+    }
     setActiveLessonId(null);
   };
   const openTutor = () => setActiveTab("tutor");
@@ -65,7 +89,7 @@ function AppContent() {
 
     {showAuth && <AuthModal onClose={() => setShowAuth(false)} onComplete={() => setShowAuth(false)} />}
     {showOnboarding && <OnboardingFlow user={user} onComplete={handleUpdateUser} onClose={() => setShowOnboarding(false)} />}
-    {showSubscription && <SubscriptionModal currentPlan={user.plan} onUpgradePlan={(plan: PlanType) => updateUser({ plan })} onClose={() => setShowSubscription(false)} />}
+    {showSubscription && <SubscriptionModal currentPlan={user.plan} onClose={() => setShowSubscription(false)} />}
     {showCertificate && <CertificateModal user={user} onClose={() => setShowCertificate(false)} />}
     {activeLessonId && <LessonDatabasePlayer lessonId={activeLessonId} onClose={() => setActiveLessonId(null)} onComplete={handleCompleteLesson} onOpenTutor={openTutor} />}
   </>;
