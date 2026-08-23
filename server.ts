@@ -132,7 +132,7 @@ const teacherRequestSchema = z.object({ teacherId: nonEmptyText(80).optional(), 
 const speechRequestSchema = z.object({ transcript: nonEmptyText(2000), targetPhrase: nonEmptyText(1000).optional(), cefrLevel: cefrSchema }).strict();
 const translationRequestSchema = z.object({ text: nonEmptyText(2000), nativeLanguage: nativeLanguageSchema }).strict();
 const customLessonRequestSchema = z.object({ topic: nonEmptyText(240), cefrLevel: cefrSchema, userGoal: nonEmptyText(200), learnerContext: learnerContextSchema.optional() }).strict();
-const saveCustomLessonRequestSchema = customLessonSchema.extend({ unitId: z.string().uuid() });
+const saveCustomLessonRequestSchema = customLessonSchema.extend({ unitId: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, "Invalid unit identifier") });
 
 app.use("/api/gemini", async (req, res, next) => {
   const key = req.header("authorization") || req.ip || "anonymous";
