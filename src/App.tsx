@@ -124,7 +124,7 @@ function AppContent() {
 
     {showAuth && <AuthModal onClose={() => setShowAuth(false)} onComplete={() => setShowAuth(false)} />}
     {showOnboarding && <OnboardingFlow user={user} onComplete={handleUpdateUser} onClose={() => setShowOnboarding(false)} />}
-    {showSubscription && <SubscriptionModal currentPlan={user.plan} onUpgradePlan={(plan: PlanType) => updateUser({ plan })} onClose={() => setShowSubscription(false)} />}
+    {showSubscription && <SubscriptionModal currentPlan={user.plan} isAuthenticated={!!authUser} onSignIn={() => setShowAuth(true)} onClose={() => setShowSubscription(false)} />}
     {showCertificate && <CertificateModal user={user} onClose={() => setShowCertificate(false)} />}
     {activeLessonId && <LessonDatabasePlayer lessonId={activeLessonId} onClose={() => setActiveLessonId(null)} onComplete={handleCompleteLesson} onOpenTutor={openTutor} />}
   </>;

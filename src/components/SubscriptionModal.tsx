@@ -1,16 +1,43 @@
 import React from "react";
 import { PlanType } from "../types";
-import { Check, Crown, Sparkles, Award, ShieldCheck, Zap } from "lucide-react";
+import { Check, Crown, Loader2, ShieldCheck } from "lucide-react";
+import { apiFetch } from "../lib/api";
 
 interface SubscriptionModalProps {
   currentPlan: PlanType;
+  isAuthenticated: boolean;
+  onSignIn: () => void;
   onClose: () => void;
 }
 
 export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
   currentPlan,
+  isAuthenticated,
+  onSignIn,
   onClose
 }) => {
+  const [loadingPlan, setLoadingPlan] = React.useState<PlanType | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const startCheckout = async (plan: PlanType) => {
+    if (plan === "free") return;
+    if (!isAuthenticated) {
+      onSignIn();
+      return;
+    }
+    setLoadingPlan(plan);
+    setError(null);
+    try {
+      const response = await apiFetch("/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan }) });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !data?.checkoutUrl) throw new Error(data?.error || "Checkout is not available yet.");
+      window.location.assign(data.checkoutUrl);
+    } catch (checkoutError) {
+      setError(checkoutError instanceof Error ? checkoutError.message : "Checkout is not available yet.");
+    } finally {
+      setLoadingPlan(null);
+    }
+  };
 
   const plans = [
     {
@@ -127,16 +154,18 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
 
                 {/* Upgrade Action Button */}
                 <button
-                  disabled
-                  onClick={(e) => e.stopPropagation()}
-                  className={`w-full py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-md disabled:opacity-50 ${p.buttonColor}`}
+                  disabled={isCurrent || loadingPlan !== null || p.id === "free"}
+                  onClick={() => void startCheckout(p.id)}
+                  className={`w-full py-2.5 rounded-xl text-xs transition-all cursor-pointer shadow-md disabled:cursor-not-allowed disabled:opacity-50 ${p.buttonColor}`}
                 >
-                  {isCurrent ? "Active Plan" : "Billing setup required"}
+                  {loadingPlan === p.id ? <span className="inline-flex items-center gap-2"><Loader2 className="h-3.5 w-3.5 animate-spin" />Opening checkout…</span> : isCurrent ? "Active Plan" : p.id === "free" ? "Included" : "Upgrade securely"}
                 </button>
               </div>
             );
           })}
         </div>
+
+        {error && <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200" role="alert">{error}</div>}
 
         {/* Money back / Guarantee callout */}
         <div className="bg-slate-800/60 p-3 rounded-2xl border border-slate-700/80 flex items-center justify-between text-xs text-slate-300">
@@ -144,7 +173,7 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({
             <ShieldCheck className="w-4 h-4 text-emerald-400" />
             <span>Cancel or modify subscription anytime in Settings. Prices in USD.</span>
           </div>
-          <span className="text-[10px] text-amber-300 font-semibold">Paid billing is not connected</span>
+          <span className="text-[10px] text-emerald-300 font-semibold">Secure checkout via Stripe</span>
         </div>
       </div>
     </div>

@@ -4,11 +4,17 @@ import dotenv from "dotenv";
 import { GoogleGenAI, Type, Modality } from "@google/genai";
 import { createClient } from "@supabase/supabase-js";
 import { createServer as createViteServer } from "vite";
+import { createHmac, timingSafeEqual } from "crypto";
 
 dotenv.config();
 
 const app = express();
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({
+  limit: "10mb",
+  verify: (req, _res, buffer) => {
+    if ((req as any).originalUrl === "/api/billing/webhook") (req as any).rawBody = Buffer.from(buffer);
+  },
+}));
 
 const PORT = Number(process.env.PORT || 3000);
 const GEMINI_TEXT_MODEL = process.env.GEMINI_TEXT_MODEL || "gemini-3.7-flash";
@@ -16,7 +22,30 @@ const requireAiAuth = process.env.AI_REQUIRE_AUTH === "true" || process.env.NODE
 const serverSupabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const serverSupabaseAnonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 const authClient = serverSupabaseUrl && serverSupabaseAnonKey ? createClient(serverSupabaseUrl, serverSupabaseAnonKey, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+const serverSupabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const billingAdminClient = serverSupabaseUrl && serverSupabaseServiceRoleKey ? createClient(serverSupabaseUrl, serverSupabaseServiceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+const paymentProvider = process.env.PAYMENT_PROVIDER || "stripe";
+const paymentSecret = process.env.PAYMENT_SECRET || process.env.STRIPE_SECRET_KEY;
+const paymentWebhookSecret = process.env.PAYMENT_WEBHOOK_SECRET || process.env.STRIPE_WEBHOOK_SECRET;
+const paymentPriceIds: Record<string, string | undefined> = {
+  premium: process.env.STRIPE_PRICE_PREMIUM,
+  professional: process.env.STRIPE_PRICE_PROFESSIONAL,
+};
 const requestWindows = new Map<string, { startedAt: number; count: number }>();
+const GEMINI_FALLBACK_TEXT_MODEL = process.env.GEMINI_FALLBACK_TEXT_MODEL || "gemini-3.6-flash";
+
+async function generateTextContent(ai: GoogleGenAI, request: any) {
+  try {
+    return await ai.models.generateContent(request);
+  } catch (error: any) {
+    const status = Number(error?.status || error?.error?.code);
+    if ((status === 429 || status === 503) && request.model !== GEMINI_FALLBACK_TEXT_MODEL) {
+      console.warn(`Gemini ${request.model} unavailable (${status}); retrying with ${GEMINI_FALLBACK_TEXT_MODEL}.`);
+      return ai.models.generateContent({ ...request, model: GEMINI_FALLBACK_TEXT_MODEL });
+    }
+    throw error;
+  }
+}
 
 app.use("/api/gemini", async (req, res, next) => {
   const key = req.header("authorization") || req.ip || "anonymous";
@@ -52,6 +81,81 @@ app.use("/api/gemini", async (req, res, next) => {
     return;
   }
   next();
+});
+
+function verifyStripeSignature(rawBody: Buffer | undefined, signature: string | undefined, secret: string) {
+  if (!rawBody || !signature) return false;
+  const timestamp = signature.split(",").find((part) => part.startsWith("t="))?.slice(2);
+  const signatures = signature.split(",").filter((part) => part.startsWith("v1=")).map((part) => part.slice(3));
+  if (!timestamp || !signatures.length || Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
+  const expected = createHmac("sha256", secret).update(`${timestamp}.${rawBody.toString("utf8")}`).digest("hex");
+  return signatures.some((candidate) => candidate.length === expected.length && timingSafeEqual(Buffer.from(candidate), Buffer.from(expected)));
+}
+
+app.use("/api/billing", async (req, res, next) => {
+  if (req.path === "/webhook") return next();
+  const authorization = req.header("authorization");
+  const token = authorization?.startsWith("Bearer ") ? authorization.slice(7) : "";
+  if (!authClient || !token) return res.status(401).json({ error: "Authentication is required for billing." });
+  const { data, error } = await authClient.auth.getUser(token);
+  if (error || !data.user) return res.status(401).json({ error: "Your session is invalid or expired." });
+  res.locals.userId = data.user.id;
+  return next();
+});
+
+app.post("/api/billing/checkout", async (req, res) => {
+  try {
+    const plan = String(req.body?.plan || "");
+    if (!Object.prototype.hasOwnProperty.call(paymentPriceIds, plan)) return res.status(400).json({ error: "Choose a valid paid plan." });
+    if (paymentProvider !== "stripe" || !paymentSecret || !paymentPriceIds[plan]) return res.status(503).json({ error: "Paid billing is not configured for this deployment." });
+    const appUrl = process.env.APP_URL || `http://localhost:${PORT}`;
+    const form = new URLSearchParams({
+      mode: "subscription",
+      "line_items[0][price]": paymentPriceIds[plan] as string,
+      "line_items[0][quantity]": "1",
+      success_url: `${appUrl}/?billing=success`,
+      cancel_url: `${appUrl}/?billing=cancelled`,
+      client_reference_id: res.locals.userId,
+      "metadata[user_id]": res.locals.userId,
+      "metadata[plan]": plan,
+    });
+    const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${paymentSecret}`, "Content-Type": "application/x-www-form-urlencoded" },
+      body: form,
+    });
+    const data = await response.json() as { url?: string; error?: { message?: string } };
+    if (!response.ok || !data.url) return res.status(response.status >= 400 ? response.status : 502).json({ error: data.error?.message || "Checkout session could not be created." });
+    return res.json({ checkoutUrl: data.url });
+  } catch (error) {
+    console.error("Checkout session error:", error);
+    return res.status(500).json({ error: "Checkout session could not be created." });
+  }
+});
+
+app.post("/api/billing/webhook", async (req, res) => {
+  if (paymentProvider !== "stripe" || !paymentWebhookSecret || !billingAdminClient) return res.status(503).json({ error: "Billing webhook is not configured for this deployment." });
+  if (!verifyStripeSignature((req as any).rawBody, req.header("stripe-signature"), paymentWebhookSecret)) return res.status(400).json({ error: "Invalid billing webhook signature." });
+  const event = req.body as any;
+  if (event?.type === "checkout.session.completed") {
+    const session = event.data?.object || {};
+    const userId = session.client_reference_id || session.metadata?.user_id;
+    const plan = session.metadata?.plan;
+    if (userId && (plan === "premium" || plan === "professional")) {
+      const { error } = await billingAdminClient.from("subscriptions").upsert({
+        user_id: userId,
+        plan_name: plan,
+        status: "active",
+        payment_provider: "stripe",
+        provider_customer_id: session.customer || null,
+        provider_subscription_id: session.subscription || null,
+        start_date: new Date().toISOString(),
+      }, { onConflict: "provider_subscription_id" });
+      if (error) return res.status(500).json({ error: "Subscription record could not be synchronized." });
+      await billingAdminClient.from("profiles").update({ plan, updated_at: new Date().toISOString() }).eq("id", userId);
+    }
+  }
+  return res.json({ received: true });
 });
 
 // Initialize Gemini Client safely
@@ -108,7 +212,7 @@ app.post("/api/gemini/onboarding-roadmap", async (req, res) => {
 
 Return JSON conforming strictly to the requested schema.`;
 
-    const response = await ai.models.generateContent({
+    const response = await generateTextContent(ai, {
       model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
@@ -186,7 +290,7 @@ Respond in JSON according to schema.`;
       { role: "user", parts: [{ text: userMessage }] }
     ];
 
-    const response = await ai.models.generateContent({
+    const response = await generateTextContent(ai, {
       model: GEMINI_TEXT_MODEL,
       contents: contents,
       config: {
@@ -243,7 +347,7 @@ Current Level: ${cefrLevel || "B1"}
 
 Provide a comprehensive speech assessment JSON including scores (0-100), word-level feedback, and native alternative.`;
 
-    const response = await ai.models.generateContent({
+    const response = await generateTextContent(ai, {
       model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
@@ -353,7 +457,7 @@ Target CEFR: ${targetCEFR || "B2"}
 
 Evaluate grammar, vocabulary level, sentence structure, coherence, and suggest higher-level vocabulary replacements.`;
 
-    const response = await ai.models.generateContent({
+    const response = await generateTextContent(ai, {
       model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
@@ -425,7 +529,7 @@ app.post("/api/gemini/translate-explain", async (req, res) => {
     const prompt = `Translate and explain the following English phrase for a learner whose native language is ${nativeLanguage || "Spanish"}:
 English Text: "${text}"`;
 
-    const response = await ai.models.generateContent({
+    const response = await generateTextContent(ai, {
       model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
@@ -492,7 +596,7 @@ Topic: "${topic || "Ordering at a Fine Dining Restaurant"}"
 Target CEFR: "${cefrLevel || "B1"}"
 Learner Goal: "${userGoal || "Speaking Fluency"}"`;
 
-    const response = await ai.models.generateContent({
+    const response = await generateTextContent(ai, {
       model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
@@ -652,7 +756,7 @@ Required 13-part lesson schema in JSON:
 12. homework (assignmentTitle, instructions, writingPrompt, speakingTaskPrompt)
 13. aiEvaluationCriteria (targetGrammarMastery, targetVocabularyDiversity, accuracyThresholdPercent, keyFeedbackFocusPoints)`;
 
-    const response = await ai.models.generateContent({
+    const response = await generateTextContent(ai, {
       model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {
@@ -1183,7 +1287,7 @@ Return a valid JSON object matching the requested schema with ALL 8 required ele
 7. Quiz presentation (quizTitle, passScorePercent, array of questions with sceneTriggerIndex, question, options, correctIndex, explanation)
 8. Lesson summary (keyTakeaways, grammarSummary, vocabularySummary, estimatedXp)`;
 
-    const response = await ai.models.generateContent({
+    const response = await generateTextContent(ai, {
       model: GEMINI_TEXT_MODEL,
       contents: prompt,
       config: {

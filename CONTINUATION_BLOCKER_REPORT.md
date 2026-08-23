@@ -2,37 +2,43 @@
 
 ## Status
 
-The implementation continued in the requested production order until a genuine external configuration blocker was reached. No video assets were generated.
+Implementation resumed after the Gemini credential was supplied and continued in the requested production order until the next genuine external account/configuration blocker was reached. No video assets were generated.
 
 ## Completed in this continuation
 
 | Area | Result |
 | --- | --- |
-| Supabase security/configuration | Removed committed project credentials from `.env.example`; added explicit server-side deployment placeholders and AI controls. |
-| Supabase migration | Applied `production_security_hardening`, `remove_duplicate_progress_indexes`, `profile_learning_fields`, and `profile_roadmap` to project `jipmxnqbndgkwnlpdrkf`. |
-| RLS and performance | Security advisor returned no lints. Foreign-key indexes and statement-cached `auth.uid()` policies were applied. Remaining performance notices are informational unused-index notices on an empty/new database. |
-| Authentication/Profile/Progress | Added profile creation fallback, persisted onboarding fields and roadmap JSON, typed profile hydration, progress loading, and conflict-safe `user_id,lesson_id` progress upserts. |
-| Gemini integration | Added stable `gemini-3.7-flash` configuration, centralized authenticated client requests through `apiFetch`, server-side AI rate limiting/authentication, and explicit production fail-closed behavior. |
-| Repository | Changes were committed and pushed to `main` as `c4e3b07`. The working tree is clean. |
+| Gemini production integration | The supplied Gemini credential was validated against `gemini-3.7-flash`. The app’s onboarding-roadmap and teacher-chat routes returned live HTTP 200 responses. A bounded retry now falls back to `gemini-3.6-flash` when Gemini 3.7 temporarily returns 429/503 pressure. |
+| Gemini gateway security | Existing bearer-token validation and per-identity rate limiting were preserved. Client AI calls use the shared `apiFetch` helper, which attaches the Supabase session token. |
+| Community persistence | Added persisted reaction hydration and a production uniqueness index for `(user_id, post_id)`. Anonymous public Community reads returned HTTP 200, while anonymous writes returned HTTP 401 as required by RLS. |
+| Payment/Subscription | Added authenticated Stripe-compatible checkout creation, signed webhook verification, idempotent subscription synchronization, and working checkout UI states. |
+| Subscription data integrity | Applied a unique provider-subscription index so repeated billing webhooks can upsert safely. |
+| Repository | Changes are ready to commit after the final payment-stage verification. |
+
+## Production migrations applied
+
+Migrations `006`–`011` are applied to Supabase project `jipmxnqbndgkwnlpdrkf`, including security hardening, duplicate-index cleanup, persisted learner fields, roadmap storage, Community reaction uniqueness, and provider-subscription uniqueness.
 
 ## Verification
 
-The following checks passed after the implementation and rebase resolution:
-
 | Check | Result |
 | --- | --- |
-| `pnpm lint` / TypeScript | Passed. |
-| `pnpm build` | Passed; Vite and server bundle generated successfully. |
-| Supabase migration recording | Passed; migrations are recorded in the production project. |
-| Supabase security advisor | Passed with no security lints. |
-| Supabase performance advisor | No remaining warning-level duplicate-index or RLS-init-plan notices; only informational unused-index notices remain. |
+| Gemini direct API credential check | Passed with HTTP 200 for `gemini-3.7-flash`. |
+| Gemini app-route live check | Passed with HTTP 200 for onboarding roadmap and teacher chat; both used the configured 3.7 model and recovered through the 3.6 fallback after temporary 503 pressure. |
+| Community public read | Passed with HTTP 200. |
+| Community anonymous write | Rejected with HTTP 401 by the production RLS boundary. |
+| Payment anonymous checkout | Rejected with HTTP 401 by the billing authentication boundary. |
+| Payment webhook without provider secrets | Rejected with HTTP 503 and no event processing. |
+| TypeScript and production build | Passed after the Gemini, Community, and payment changes. |
 | Video asset scan | No `.mp4`, `.webm`, `.mov`, or `.mkv` assets were created. |
 
 ## External blocker
 
-Live Gemini production verification cannot proceed because the sandbox has no `GEMINI_API_KEY` or `GOOGLE_API_KEY`. The production server is intentionally configured to require authenticated requests and a server-side Gemini credential; it must not silently return mock AI responses in production. The deployment owner must add the real Gemini API key and server-side Supabase auth values through the deployment secret manager. After those credentials are available, the next step is to run authenticated live Gemini smoke tests and continue with Community, payment/subscription, mobile-platform, and full-QA stages.
+The next production step requires a Stripe account/provider configuration that is not available in the environment. The implementation expects the deployment secret manager to provide `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PREMIUM`, `STRIPE_PRICE_PROFESSIONAL`, `SUPABASE_SERVICE_ROLE_KEY`, and `APP_URL`. Without those values, a real checkout session and signed webhook round trip cannot be verified safely. The payment UI and server boundaries are implemented and fail closed until the Stripe account configuration is supplied.
 
-The configured production text model is `gemini-3.7-flash`, which Google documents as a generally available production model.[1]
+Capacitor Android/iOS completion and full QA remain queued behind this payment-provider blocker because the requested order requires completing Payment/Subscription before mobile packaging and the final release gate.
+
+The configured Gemini text model is `gemini-3.7-flash`, documented by Google as generally available for production use.[1]
 
 ## References
 

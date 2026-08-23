@@ -155,6 +155,7 @@ export const db = {
   createCommunityComment: (postId: string, userId: string, authorName: string, body: string) => communityDb.from('community_comments').insert({ post_id: postId, user_id: userId, author_name: authorName, body }).select('id,post_id,user_id,author_name,body,created_at').single(),
   addCommunityReaction: (postId: string, userId: string) => communityDb.from('community_post_reactions').insert({ post_id: postId, user_id: userId }),
   removeCommunityReaction: (postId: string, userId: string) => communityDb.from('community_post_reactions').delete().eq('post_id', postId).eq('user_id', userId),
+  getCommunityReactions: (userId: string, limit = 100) => communityDb.from('community_post_reactions').select('post_id').eq('user_id', userId).limit(limit),
 };
 
 // Full lesson data loader

@@ -57,6 +57,16 @@ export const CommunityView: React.FC<{ isAuthenticated: boolean; onSignIn: () =>
     return () => { active = false; };
   }, []);
 
+  useEffect(() => {
+    if (!isSupabaseConfigured || !user) {
+      setLiked([]);
+      return;
+    }
+    void db.getCommunityReactions(user.id).then(({ data, error: reactionError }: any) => {
+      if (!reactionError) setLiked((data ?? []).map((row: { post_id: string }) => row.post_id));
+    });
+  }, [user]);
+
   const submitPost = async () => {
     const body = draft.trim();
     if (!body) return;
