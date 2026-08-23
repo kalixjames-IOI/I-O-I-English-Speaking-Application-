@@ -18,6 +18,7 @@ import { LessonDatabasePlayer } from "./components/LessonDatabasePlayer";
 import { HomeDashboard } from "./components/HomeDashboard";
 import { CommunityView } from "./components/CommunityView";
 import { AiContentStudio } from "./components/AiContentStudio";
+import { AnimatedLogoSplash } from "./components/AnimatedLogoSplash";
 import { Sparkles } from "lucide-react";
 
 type PersistedProfile = {
@@ -48,6 +49,12 @@ function AppContent() {
   const [showSubscription, setShowSubscription] = useState(false);
   const [showCertificate, setShowCertificate] = useState(false);
   const [showContentStudio, setShowContentStudio] = useState(false);
+  const [showSplash, setShowSplash] = useState(true);
+
+  React.useEffect(() => {
+    const splashTimer = window.setTimeout(() => setShowSplash(false), 2600);
+    return () => window.clearTimeout(splashTimer);
+  }, []);
 
   React.useEffect(() => {
     if (!authUser) return;
@@ -114,6 +121,7 @@ function AppContent() {
   const openCourse = () => setActiveTab("course");
   const openProfile = () => setActiveTab("profile");
 
+  if (showSplash) return <AnimatedLogoSplash />;
   if (authLoading) return <div className="flex min-h-screen items-center justify-center bg-slate-950 text-center"><div><div className="mx-auto mb-4 h-10 w-10 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" /><p className="text-sm text-slate-400">Loading your IOI learning space…</p></div></div>;
 
   return <><MobileContainer activeTab={activeTab} setActiveTab={setActiveTab} userStreak={user.streakDays} userXp={user.totalXp} userPlan={user.plan} onOpenSubscription={() => setShowSubscription(true)} isAuthenticated={!!authUser} userEmail={authUser?.email} userName={user.name} onSignIn={() => setShowAuth(true)} onSignOut={signOut}><HeaderNav user={user} activeTab={activeTab} setActiveTab={setActiveTab} onOpenSubscription={() => setShowSubscription(true)} onOpenOnboarding={() => setShowOnboarding(true)} isAuthenticated={!!authUser} userEmail={authUser?.email} userName={user.name} onSignIn={() => setShowAuth(true)} onSignOut={signOut} />
