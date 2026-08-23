@@ -2,3 +2,6 @@ allowBuilds:
   '@google/genai': true
   esbuild: true
   protobufjs: true
+overrides:
+  nanoid: 3.3.18
+  'tailwindcss>nanoid': 3.3.18

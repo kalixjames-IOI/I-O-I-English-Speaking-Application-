@@ -9,7 +9,7 @@ import { describeSpeechRecognitionError, getSpeechRecognitionConstructor, normal
 interface LessonDatabasePlayerProps {
   lessonId: string;
   onClose: () => void;
-  onComplete?: (xpGained: number) => void;
+  onComplete?: (score: number, xpGained: number) => void;
   onOpenTutor?: () => void;
 }
 
@@ -171,7 +171,9 @@ export const LessonDatabasePlayer: React.FC<LessonDatabasePlayerProps> = ({ less
       return;
     }
     setShowResults(true);
-    onComplete?.(quizzes.length ? Math.round((quizScore / quizzes.length) * 100) : 0);
+    const finalScore = quizzes.length ? Math.round((quizScore / quizzes.length) * 100) : 0;
+    const xpReward = Number(data?.lesson?.content?.xpReward ?? finalScore);
+    onComplete?.(finalScore, Number.isFinite(xpReward) ? Math.max(0, Math.round(xpReward)) : finalScore);
   };
 
   const resetQuiz = () => {

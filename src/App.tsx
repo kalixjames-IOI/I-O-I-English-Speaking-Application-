@@ -93,13 +93,15 @@ function AppContent() {
     }
     setShowOnboarding(false);
   };
-  const handleCompleteLesson = (xpGained: number) => {
+  const handleCompleteLesson = (score: number, xpGained: number) => {
     const lessonId = activeLessonId;
+    const safeScore = Math.max(0, Math.min(100, Math.round(score)));
+    const safeXp = Math.max(0, Math.round(xpGained));
     setUser((previous) => {
-      const nextXp = previous.totalXp + xpGained;
+      const nextXp = previous.totalXp + safeXp;
       if (authUser && isSupabaseConfigured && lessonId) {
         void Promise.all([
-          db.upsertProgress(authUser.id, lessonId, { completion_status: "completed", score: 100, xp_earned: xpGained }),
+          db.upsertProgress(authUser.id, lessonId, { completion_status: "completed", score: safeScore, xp_earned: safeXp }),
           db.updateProfile(authUser.id, { total_xp: nextXp }),
         ]);
       }
